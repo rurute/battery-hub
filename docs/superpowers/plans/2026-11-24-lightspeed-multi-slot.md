@@ -244,3 +244,7 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
 
 - 実機での動き（エラーの返答が届く collection、レシーバーのシリアル番号の形、名前の返答の生のバイト列、G HUB との比較）は確かめていない
 - APPROVE は、計画が承認済みの spec と整合しているというレビュアの判定である。実装済み・テスト成功・HUMAN の承認のどれでもない
+
+### HUMAN の工程承認
+
+- 文面: 「Nativeで進めて」（2026-11-24、対象 HEAD `d7860d2`）
