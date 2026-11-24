@@ -224,3 +224,19 @@ test('a refresh asked for while a check is running waits for it instead of being
   assert.equal(refreshed, 1);
   assert.equal(devices.mouse.lastReading.capacity, 49);
 });
+
+test('a refresh asks the worker to list receivers afresh, a routine poll does not', async () => {
+  const seen = [];
+  const original = hidClient.enumerate;
+  hidClient.enumerate = async (options) => { seen.push(options); return []; };
+  devices.pad = { id: 'pad', driverId: 'generic' }; // not connected, so the poll lists devices again
+  try {
+    await poller.pollOnce(() => {}, { force: true });
+    assert.ok(seen.length >= 2);
+    assert.equal(seen[0] && seen[0].fresh, true);
+    assert.ok(seen.slice(1).every((o) => !(o && o.fresh)));
+  } finally {
+    hidClient.enumerate = original;
+    delete devices.pad;
+  }
+});

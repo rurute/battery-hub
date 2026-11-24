@@ -153,14 +153,17 @@ function onHeadsetStatus(id, state, onUpdate) {
 const LIVE_TTL_MS = 5 * 60 * 1000;
 let liveCache = null;
 let liveCacheAt = 0;
+let wantFresh = false; // a manual Refresh also asks receivers for their pairings again
 
 async function getLiveDevices(force) {
   if (!force && liveCache && (Date.now() - liveCacheAt) < LIVE_TTL_MS) return liveCache;
-  liveCache = await hidClient.enumerate();
+  const fresh = wantFresh;
+  wantFresh = false;
+  liveCache = await hidClient.enumerate({ fresh });
   liveCacheAt = Date.now();
   return liveCache;
 }
-function invalidateLiveCache() { liveCache = null; }
+function invalidateLiveCache() { liveCache = null; wantFresh = true; }
 
 // Resolve a pollable device to a reading. Tries the exact saved id plus any live sibling
 // the same driver recognises (the mouse's wired charging identity), reading each until one

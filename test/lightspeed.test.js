@@ -184,3 +184,17 @@ test('serialize runs calls on one key one at a time', async () => {
   assert.deepEqual(order, ['a+', 'a-', 'b+', 'b-']);
   assert.ok(log.indexOf('c+') < log.indexOf('a-')); // another key does not wait
 });
+
+// ---- the register exchange itself ----
+
+test('register requests and replies match what the receiver sent', () => {
+  const pad20 = (b) => b.concat(new Array(20 - b.length).fill(0));
+  assert.deepEqual(lightspeed.request(0x20), [0x10, 0xff, 0x83, 0xb5, 0x20, 0x00, 0x00]);
+  const reply = pad20([0x11, 0xff, 0x83, 0xb5, 0x20, 0x07, 0x08, 0x40, 0x8e]);
+  assert.equal(lightspeed.replyTo(reply, 0x20)[0], 0x20);
+  assert.equal(lightspeed.parsePairing(lightspeed.replyTo(reply, 0x20)).wpid, 0x408e);
+  assert.equal(lightspeed.replyTo(reply, 0x21), null);
+  assert.throws(() => lightspeed.replyTo([0x10, 0xff, 0x8f, 0x83, 0xb5, 0x09, 0x00], 0x20), /register error 9/);
+  assert.equal(lightspeed.replyTo(pad20([0x11, 0x01, 0x83, 0xb5, 0x20]), 0x20), null); // a device's own report
+  assert.equal(lightspeed.replyTo([0x10, 0x01, 0x8f, 0x83, 0xb5, 0x09, 0x00], 0x20), null);
+});

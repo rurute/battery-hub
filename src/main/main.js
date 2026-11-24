@@ -268,8 +268,9 @@ app.on('before-quit', () => { isQuitting = true; });
 const SYSTEM_SOURCE = { bluetooth: 'Bluetooth', xinput: 'Xbox wireless' };
 
 ipcMain.handle('devices:list-live', async () => {
-  const [devices, systemDevices] = await Promise.all([hidClient.enumerate(), system.scan()]);
-  const hid = devices.map((d) => ({
+  const [devices, systemDevices] = await Promise.all([hidClient.enumerate({ fresh: true }), system.scan()]);
+  // A receiver split into its devices is offered as those devices, not as itself.
+  const hid = devices.filter((d) => !d.expanded).map((d) => ({
     id: d.id,
     serialNumber: d.serialNumber,
     vendorId: d.vendorId,

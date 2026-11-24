@@ -5,6 +5,8 @@
 //
 // A child's id is the receiver's id plus the device's wireless PID, never the slot, so a device that
 // is paired again into another slot keeps its card.
+const session = require('../session');
+
 const LOGITECH = 0x046d;
 const RECEIVER_PIDS = [0xc547]; // Lightspeed receivers this is known to work on
 const KINDS = { 1: 'Logitech keyboard', 2: 'Logitech mouse' };
@@ -82,15 +84,56 @@ async function scanReceiver(ask) {
   return { answered, devices };
 }
 
-const longPath = (device) => device.channels.find((c) => c.usagePage === 0xff00 && c.usage === 0x02).path;
 
 const cache = new Map(); // receiver id -> devices found on it, while it stays plugged in
 
-function notWired() {
-  return () => Promise.reject(new Error('not wired'));
+// HID++ 1.0 long register read of 0xB5: sent as a short report, answered as a long one. The
+// receiver's error answer is short, and Windows hands short and long reports to separate
+// collections, so both are read.
+const SHORT = 0x10;
+const LONG = 0x11;
+const RECEIVER_INDEX = 0xff;
+const GET_LONG_REGISTER = 0x83;
+const PAIRING_REGISTER = 0xb5;
+const ERROR = 0x8f;
+const REPLY_MS = 400;
+const READ_SLICE_MS = 50;
+
+const request = (sub) => [SHORT, RECEIVER_INDEX, GET_LONG_REGISTER, PAIRING_REGISTER, sub, 0x00, 0x00];
+
+// The params of the receiver's answer to this sub-address; throws on its error answer.
+function replyTo(frame, sub) {
+  if (frame.length < 6 || frame[1] !== RECEIVER_INDEX) return null;
+  if (frame[0] === SHORT && frame[2] === ERROR && frame[3] === GET_LONG_REGISTER && frame[4] === PAIRING_REGISTER) {
+    throw new Error(`register error ${frame[5]}`);
+  }
+  if (frame[0] !== LONG || frame[2] !== GET_LONG_REGISTER || frame[3] !== PAIRING_REGISTER || frame[4] !== sub) return null;
+  return frame.slice(4);
 }
 
-async function expandReceivers(devices, { fresh = false, ask = notWired } = {}) {
+const channelOf = (device, usage) => device.channels.find((c) => c.usagePage === 0xff00 && c.usage === usage);
+
+function realAsk(parent) {
+  const short = channelOf(parent, 0x01);
+  const long = channelOf(parent, 0x02);
+  return async (sub) => {
+    const ends = [[short.path, await session.acquire(short.path)], [long.path, await session.acquire(long.path)]];
+    for (const [path, dev] of ends) await session.readQueued(path, dev); // a late reply to an old request is stale
+    await session.write(short.path, ends[0][1], request(sub));
+    const deadline = Date.now() + REPLY_MS;
+    while (Date.now() < deadline) {
+      for (const [path, dev] of ends) {
+        const frame = await session.read(path, dev, READ_SLICE_MS);
+        if (!frame.length) continue;
+        const params = replyTo(frame, sub);
+        if (params) return params;
+      }
+    }
+    throw new Error('timeout waiting for register reply');
+  };
+}
+
+async function expandReceivers(devices, { fresh = false, ask = realAsk } = {}) {
   for (const id of cache.keys()) {
     if (!devices.some((d) => d.id === id)) cache.delete(id);
   }
@@ -98,7 +141,7 @@ async function expandReceivers(devices, { fresh = false, ask = notWired } = {}) 
   for (const device of devices) {
     if (!isTarget(device)) { out.push(device); continue; }
     if (fresh || !cache.has(device.id)) {
-      const scan = await serialize(longPath(device), () => scanReceiver(ask(device))).catch(() => ({ answered: false }));
+      const scan = await serialize(channelOf(device, 0x02).path, () => scanReceiver(ask(device))).catch(() => ({ answered: false }));
       if (scan.answered && scan.devices.length) cache.set(device.id, scan.devices);
       else if (scan.answered) cache.delete(device.id);
     }
@@ -115,5 +158,5 @@ function _reset() {
 }
 
 module.exports = {
-  RECEIVER_PIDS, isTarget, parsePairing, parseName, childOf, serialize, scanReceiver, expandReceivers, _reset,
+  RECEIVER_PIDS, isTarget, parsePairing, parseName, childOf, serialize, scanReceiver, expandReceivers, request, replyTo, _reset,
 };
