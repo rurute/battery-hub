@@ -86,6 +86,8 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
   const saved = { a: { id: `1133:50503:${serial}:408e` }, b: { id: `1133:50503:${serial}:409f` } };
   assert.equal(identityOf(saved.a), null);
   assert.deepEqual(planMerges(saved), []);
+  const livePair = { a: { id: `1133:50503:${serial}:408e`, serialNumber: serial }, b: { id: `1133:50503:${serial}:409f`, serialNumber: serial } };
+  assert.deepEqual(planMerges(livePair), []);
   assert.equal(identityOf({ id: `1133:50503:${serial}` }), `mac:${serial}`); // unchanged for others
 });
 ```
@@ -132,7 +134,7 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
 
 - [ ] **Step 4: 通ることを確かめる** — Run: `npm test` / Expected: 全部 PASS
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(hidpp): expand a Lightspeed receiver into its paired devices, remembered per receiver (#2)"`
+- [ ] **Step 5: Commit** — `git add src/main/hid/drivers/lightspeed.js test/lightspeed.test.js && git commit -m "feat(hidpp): expand a Lightspeed receiver into its paired devices, remembered per receiver (#2)"`
 
 ### Task 3: レジスタの実際のやり取りと、enumerate までの配線
 
@@ -166,7 +168,7 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
 
 - [ ] **Step 4: 通ることを確かめる** — Run: `npm test` / Expected: 全部 PASS
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(hidpp): ask the receiver for its pairings when devices are listed (#2)"`
+- [ ] **Step 5: Commit** — `git add src/main/hid/drivers/lightspeed.js src/main/hid/hid-worker.js src/main/hid/hid-client.js src/main/poller.js src/main/main.js test/lightspeed.test.js test/poller.test.js && git commit -m "feat(hidpp): ask the receiver for its pairings when devices are listed (#2)"`
 
 ### Task 4: 子のスロットだけを読む
 
@@ -190,7 +192,7 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
 
 - [ ] **Step 4: 通ることを確かめる** — Run: `npm test` / Expected: 全部 PASS
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(hidpp): read each device on a receiver from its own slot (#2)"`
+- [ ] **Step 5: Commit** — `git add src/main/hid/drivers/hidpp.js test/protocols.test.js && git commit -m "feat(hidpp): read each device on a receiver from its own slot (#2)"`
 
 ### Task 5: カードの設定が機器ごとに残ることと、実機の確認
 
@@ -201,15 +203,15 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
 - Consumes: Task 1 の `identityOf` の規則と子の ID の形、Task 3 の `enumerate({ fresh })`
 
 - [ ] **Step 1: テストを書く** — `two cards on one receiver keep their own settings when the devices swap slots`:
-  - `devices` に子のカード 2 枚（`1133:50503:0123456789ab:408e` と `...:409f`、`driverId: 'hidpp'`）を、別々の `customName` / `customIcon` / `hidden: false` / `order` / `history` で置く
+  - `devices` に子のカード 2 枚（`1133:50503:0123456789ab:408e` と `...:409f`、`driverId: 'hidpp'`）を、別々の `customName` / `customIcon` / `order` / `history` で置く。`408e` は `hidden: false`、history `[{ t: Date.now() - 60000, c: 50, ch: 0 }]`。`409f` は `hidden: true`、history `[{ t: Date.now() - 120000, c: 60, ch: 0 }]`（`history.js` の要素の形。7 日より古い点は `pushHistory` が捨てるので、最近の時刻にする）
   - `hidClient.enumerate` は、親（`expanded: true`）と 2 台の子を、1 回目はスロット 1/2、2 回目はスロット 2/1 で返す。`hidClient.readBattery` は `(driverId, device) => ({ capacity: device.receiver.wpid === 0x408e ? 95 : 81, charging: false })` で即座に返す
-  - `pollOnce({ force: true })` を 2 回呼ぶ
-  - 期待: `Object.keys(devices)` に 2 枚とも残る（まとめられない）。それぞれの `customName` / `customIcon` / `order` が最初のまま。`408e` のカードの `lastReading.capacity` が 95、`409f` が 81。2 回目の `readBattery` に渡った `408e` の子の `receiver.slot` が 2
+  - `poller.pollOnce(() => {}, { force: true })` を 2 回呼ぶ（`force` で 2 回目の一覧が取り直され、入れ替えたスロットが届く）
+  - 期待: `Object.keys(devices)` に 2 枚とも残る（まとめられない）。それぞれの `customName` / `customIcon` / `order` / `hidden` が最初のまま。`408e` の history は最初に置いた要素（`c: 50`）で始まり、最後の要素の容量が 95、`lastReading.capacity` が 95。`409f` は非表示なので読まれず、history は最初のまま（`deepEqual`）、`lastReading` は無い。2 回目の `readBattery` に渡った `408e` の子の `receiver.slot` が 2
   - テストの終わりに、ほかのテストが使う `hidClient` の差し替えと `devices` を元に戻す
 
 - [ ] **Step 2: 通ることを確かめる** — Run: `npm test` / Expected: 全部 PASS（Task 1〜4 で実装済みなので、新しいテストも通るはず。通らなければ原因を直す）
 
-- [ ] **Step 3: Commit** — `git commit -m "test(poller): two devices on one receiver keep their own cards (#2)"`
+- [ ] **Step 3: Commit** — `git add test/poller.test.js && git commit -m "test(poller): two devices on one receiver keep their own cards (#2)"`
 
 - [ ] **Step 4: 実機で確かめる**（HUMAN と一緒に。branch を push し、fork の手動ビルドを実行する: `gh workflow run build.yml -R rurute/battery-hub --ref feat/lightspeed-multi-slot` → `gh run watch -R rurute/battery-hub` → `gh run download -R rurute/battery-hub -D dist/ci`）。HUMAN が Windows でインストールして次を確かめる:
   - Add device に `G913 TKL` と `G502 X LS` が別々に出て、レシーバーそのものは出ない
@@ -217,4 +219,6 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
   - マウスを寝かせても、キーボードのカードは読み続けられ、マウスのカードは今のスリープ時と同じ表示になる
   - 既存のレシーバーのカードが今のまま読める
   - 2 枚に別々の名前とアイコンを付け、アプリを再起動しても残っている
-  - 結果を HUMAN に報告する。Issue #2 にコメントするかは HUMAN に聞く
+- [ ] **Step 5: エラーの返答が届く collection を確かめる**（spec の「どちらに届いたかは実機で確かめる」）。Issue #2 の調査と同じく、WSL から Windows の PowerShell で HID API を呼ぶ。Battery Hub は終了しておく。レシーバーの COL01（`0xFF00/0x0001`）に空のスロット 3 の pairing info の問い合わせ `10 ff 83 b5 22 00 00` を書き、COL01 と COL02（`0xFF00/0x0002`）をそれぞれ 1 秒ずつ読み、`10 ff 8f 83 b5 ..` がどちらに届いたかを記録する。あわせて、レシーバーの HID のシリアル番号が 12 桁の 16 進の形かを記録する。どちらの結果でも Task 3 の `realAsk`（両方の collection を読む）はそのままでよい。結果が spec の前提（短い側に書けば返答が受け取れる）と食い違えば、実装を進めずに HUMAN に報告する
+
+- [ ] **Step 6: 報告する** — Step 4・5 の結果を HUMAN に報告する。Issue #2 にコメントするかは HUMAN に聞く
