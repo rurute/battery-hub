@@ -62,11 +62,13 @@ const REGISTER_ERROR = /^register error/;
 const TIMEOUT = /^timeout/;
 
 // ask(sub) -> params of register 0xB5 at that sub-address. "answered" says the receiver replied for
-// at least one slot; then a slot that only timed out is taken to be empty, since the receiver itself
-// answers for paired devices even while they sleep.
+// at least one slot. A slot that only timed out is listed in timedOut: it is most likely empty, but
+// a reply can also be lost (G HUB talks to the same receiver), so what it held before is kept. Any
+// other failure means the receiver could not be reached, and the whole scan counts as unanswered.
 async function scanReceiver(ask) {
   let answered = false;
   const devices = [];
+  const timedOut = [];
   for (const slot of SLOTS) {
     let pairing;
     try {
@@ -74,16 +76,17 @@ async function scanReceiver(ask) {
       answered = true;
     } catch (e) {
       if (REGISTER_ERROR.test(e.message)) answered = true;
-      continue; // empty, timed out, or the receiver could not be reached
+      else if (TIMEOUT.test(e.message)) timedOut.push(slot);
+      else return { answered: false, devices: [], timedOut: [] };
+      continue;
     }
     if (!pairing) continue;
     let name = null;
     try { name = parseName(await ask(NAME + slot - 1)); } catch (_) {}
     devices.push({ slot, ...pairing, name });
   }
-  return { answered, devices };
+  return { answered, devices, timedOut };
 }
-
 
 const cache = new Map(); // receiver id -> devices found on it, while it stays plugged in
 
@@ -142,8 +145,13 @@ async function expandReceivers(devices, { fresh = false, ask = realAsk } = {}) {
     if (!isTarget(device)) { out.push(device); continue; }
     if (fresh || !cache.has(device.id)) {
       const scan = await serialize(channelOf(device, 0x02).path, () => scanReceiver(ask(device))).catch(() => ({ answered: false }));
-      if (scan.answered && scan.devices.length) cache.set(device.id, scan.devices);
-      else if (scan.answered) cache.delete(device.id);
+      if (scan.answered) {
+        const kept = (cache.get(device.id) || [])
+          .filter((d) => scan.timedOut.includes(d.slot) && !scan.devices.some((f) => f.wpid === d.wpid));
+        const found = [...scan.devices, ...kept].sort((a, b) => a.slot - b.slot);
+        if (found.length) cache.set(device.id, found);
+        else cache.delete(device.id);
+      }
     }
     const found = cache.get(device.id);
     if (!found) { out.push(device); continue; }

@@ -201,3 +201,34 @@ test('register requests and replies match what the receiver sent', () => {
   assert.equal(lightspeed.replyTo(pad20([0x11, 0x01, 0x83, 0xb5, 0x20]), 0x20), null); // a device's own report
   assert.equal(lightspeed.replyTo([0x10, 0x01, 0x8f, 0x83, 0xb5, 0x09, 0x00], 0x20), null);
 });
+
+// ---- from the final review ----
+
+const failingAt = (answers, badSub, message) => () => {
+  const ask = answers();
+  return async (sub) => { if (sub === badSub) throw new Error(message); return ask(sub); };
+};
+
+test('an I/O failure partway through keeps the previous children', async () => {
+  lightspeed._reset();
+  await lightspeed.expandReceivers([RECEIVER], { ask: receiverAnswering([KEYBOARD, MOUSE]) });
+  const out = await lightspeed.expandReceivers([RECEIVER], { ask: failingAt(receiverAnswering([KEYBOARD, MOUSE]), 0x21, 'could not write'), fresh: true });
+  assert.deepEqual(out.map((d) => d.id), ['1133:50503:ABC', '1133:50503:ABC:408e', '1133:50503:ABC:409f']);
+});
+
+test('a slot that only timed out keeps the device it had', async () => {
+  lightspeed._reset();
+  await lightspeed.expandReceivers([RECEIVER], { ask: receiverAnswering([KEYBOARD, MOUSE]) });
+  const out = await lightspeed.expandReceivers([RECEIVER], { ask: failingAt(receiverAnswering([KEYBOARD, MOUSE]), 0x21, 'timeout waiting for register reply'), fresh: true });
+  assert.deepEqual(out.map((d) => d.id), ['1133:50503:ABC', '1133:50503:ABC:408e', '1133:50503:ABC:409f']);
+  assert.equal(out[2].receiver.slot, 2);
+});
+
+test('a device found in a new slot is not also kept in the old one that timed out', async () => {
+  lightspeed._reset();
+  await lightspeed.expandReceivers([RECEIVER], { ask: receiverAnswering([KEYBOARD, MOUSE]) });
+  const moved = failingAt(receiverAnswering([KEYBOARD, null, MOUSE]), 0x21, 'timeout waiting for register reply');
+  const out = await lightspeed.expandReceivers([RECEIVER], { ask: moved, fresh: true });
+  assert.deepEqual(out.map((d) => d.id), ['1133:50503:ABC', '1133:50503:ABC:408e', '1133:50503:ABC:409f']);
+  assert.equal(out[2].receiver.slot, 3);
+});
