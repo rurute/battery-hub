@@ -237,6 +237,7 @@ function renderDetail() {
 
   renderAlert(dev);
   offerReadReport(dev);
+  offerWorksReport(dev);
 
   // Keep a reading the user is hovering rather than redrawing it out from under them.
   if (detail.hover === null && !detail.opening) renderChart();

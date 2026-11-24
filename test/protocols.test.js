@@ -480,3 +480,167 @@ test('the Compx keyboard receiver gets its own driver, not the Kysona mouse one'
   const vxe = { vendorId: 0x3554, productId: 0xf58a, channels: [{ usagePage: 0xff02, usage: 2 }] };
   assert.equal(detectDriver(vxe).id, 'kysona');
 });
+
+test('Corsair Bragi headsets read the battery in tenths, and know a missing headset', () => {
+  const steps = entry(0x1b1c, 0x2a08).steps;
+  assert.equal(entry(0x1b1c, 0x0a97), entry(0x1b1c, 0x2a08));
+  const battery = steps[steps.length - 1];
+  assert.deepEqual(battery.request.slice(0, 6), [0x00, 0x02, 0x09, 0x02, 0x0f, 0x00]);
+  assert.equal(battery.request.length, 65);
+  assert.deepEqual(battery.parse(frame([0x01, 0x01, 0x02, 0x00, 0x52, 0x03])), { capacity: 85 }); // 850 tenths
+  assert.equal(battery.parse(frame([0x01, 0x01, 0x02, 0x00, 0x1c, 0x1b])), null); // someone else's answer
+  assert.equal(battery.parse(frame([0x01, 0x00, 0x02, 0x05, 0x00, 0x00])).offline, true);
+  assert.equal(battery.parse(frame([0x01, 0x01, 0x06, 0x00, 0x00, 0x00])), null); // a status push
+  // The wake-up asks the receiver first, so a receiver reply is accepted there and not for the headset.
+  assert.deepEqual(steps[0].parse(frame([0x01, 0x00, 0x02, 0x00, 0x13, 0x01])), {});
+  assert.equal(steps[2].parse(frame([0x01, 0x00, 0x02, 0x00, 0x13, 0x01])), null);
+  const se = entry(0x1b1c, 0x0a40).steps[0];
+  assert.deepEqual(se.request.slice(0, 5), [0x02, 0x09, 0x02, 0x0f, 0x00]);
+  assert.equal(se.request.length, 64);
+  assert.deepEqual(se.parse(frame([0x01, 0x01, 0x02, 0x00, 0x5a, 0x00])), { capacity: 9 });
+});
+
+test('MCHOSE V9 PRO reads like the X9, and the Astro A50 Gen 4 checks the headset is linked first', () => {
+  const v9 = entry(0x291d, 0x385d).steps[0];
+  assert.deepEqual(v9.request.slice(0, 3), [0x55, 0x65, 0x01]);
+  assert.deepEqual(v9.parse(frame([0x55, 0x65, 0x32, 0x02])), { capacity: 50 });
+  assert.equal(v9.parse(frame([0x55, 0x65, 0x32, 0x05])), null);
+  const [link, level] = entry(0x9886, 0x002c).steps;
+  assert.deepEqual(link.parse(frame([0x02, 0x02, 0x01, 0x02])), {});
+  assert.equal(link.parse(frame([0x02, 0x02, 0x01, 0x00])).offline, true);
+  assert.deepEqual(level.parse(frame([0x02, 0x02, 0x01, 0x80 | 64])), { capacity: 64, charging: true });
+  assert.equal(level.parse(frame([0x02, 0x01, 0x01, 0x00])), null);
+});
+
+test('mice on the Compx receiver chip use the VXE protocol, other chips with the same name do not', () => {
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  const compxLayout = [ch(1, 2), ch(1, 6), ch(0xff02, 2), ch(0xff04, 2), ch(0xff03, 0)];
+  const device = (vendorId, productId, channels) => ({ vendorId, productId, channels });
+  assert.equal(detectDriver(device(0x373b, 0x1085, compxLayout)).id, 'kysona'); // Linux hid-pulsar's ATK dongle
+  assert.equal(detectDriver(device(0x260d, 0x1074, compxLayout)).id, 'kysona');
+  assert.equal(detectDriver(device(0x25a7, 0xfa07, compxLayout)).id, 'kysona');
+  const nearlink = [ch(1, 2), ch(1, 6), ch(0xffb1, 1), ch(0xffb2, 1)];
+  assert.notEqual((detectDriver(device(0x373b, 0x108b, nearlink)) || {}).id, 'kysona');
+  const noCommand = [ch(1, 2), ch(0xff01, 0), ch(0xff02, 2)];
+  assert.notEqual((detectDriver(device(0x25a7, 0xfa70, noCommand)) || {}).id, 'kysona');
+  assert.equal(detectDriver(device(0x3554, 0xf58a, [ch(0xff02, 2)])).id, 'kysona');
+  assert.equal(detectDriver(device(0x3554, 0xfa09, compxLayout)).id, 'compx');
+});
+
+test('MCHOSE 2.4G keyboards read the base info block, on the collection with no usage', () => {
+  const kb = entry(0x3837, 0x3033);
+  const step = kb.steps[0];
+  assert.deepEqual(step.request.slice(0, 9), [0x00, 0x55, 0x04, 0x00, 0x38, 0x38, 0x00, 0x00, 0x00]);
+  assert.equal(step.request.length, 65);
+  const reply = (b) => { const f = new Array(64).fill(0); f[0] = 0xaa; f[1] = 0x04; f[4] = 56; f[40] = b; return f; };
+  assert.deepEqual(step.parse(reply(73)), { capacity: 73, charging: false });
+  assert.deepEqual(step.parse(reply(0x80 | 40)), { capacity: 40, charging: true });
+  assert.equal(step.parse([0xaa, 0x05, 0, 0, 56, 0, 0, ...new Array(57).fill(0)]), null);
+  const channels = [{ usagePage: 1, usage: 6, path: 'kbd' }, { usagePage: 1, path: 'cmd' }, { usagePage: 0xff31, usage: 0x74, path: 'v' }];
+  assert.deepEqual(channelsFor({ channels }, kb).map((c) => c.path), ['cmd']);
+});
+
+test('MCHOSE mice: the read-device request is inverted, and the level comes back inverted', () => {
+  const mouse = require('../src/main/hid/drivers/mchose-mouse');
+  const req = mouse.request();
+  assert.equal(req[0], 0x11);
+  assert.equal(req[1], 0x06 ^ 0xff);
+  assert.ok(req.slice(2).every((b) => b === 0xff));
+  assert.equal(req.length, 21);
+  // vid 3837, pid 100b, firmware, link byte, level 62, charging
+  const data = [0x37, 0x38, 0x0b, 0x10, 1, 2, 3, 4, 0x30, 62, 1, ...new Array(9).fill(0)];
+  const raw = [0x11, 0x06 ^ 0xff, ...data.map((b) => b ^ 0xff)];
+  assert.deepEqual(mouse.parseReply(raw), { capacity: 62, charging: true });
+  raw[2 + 9] = 0 ^ 0xff;
+  assert.equal(mouse.parseReply(raw).offline, true);
+  assert.equal(mouse.parseReply([0x11, 0x04 ^ 0xff, ...data]), null); // another command's answer
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  const device = (vendorId, productId) => ({ vendorId, productId, channels: [ch(1, 2), ch(0xff0b, 0x104), ch(0xff01, 1)] });
+  assert.equal(detectDriver(device(0x3837, 0x100b)).id, 'mchose-mouse');
+  assert.equal(detectDriver(device(0x5253, 0x1021)).id, 'mchose-mouse');
+  assert.notEqual((detectDriver(device(0x3837, 0x3033)) || {}).id, 'mchose-mouse');
+});
+
+test('Glorious and LAMZU mice answer in feature report 0, and know when the mouse sleeps', () => {
+  const g = require('../src/main/hid/drivers/sinowealth');
+  const req = g.request();
+  assert.equal(req.length, 65);
+  assert.deepEqual([req[0], req[3], req[4], req[6]], [0, 2, 2, 0x83]);
+  const reply = (status, pct) => { const r = new Array(65).fill(0); r[1] = status; r[6] = 0x83; r[8] = pct; return r; };
+  assert.deepEqual(g.parseReply(reply(0xa1, 57), false), { capacity: 57, charging: false });
+  assert.deepEqual(g.parseReply(reply(0xa1, 80), true), { capacity: 80, charging: true });
+  const charging = reply(0xa1, 66); charging[7] = 1;
+  assert.deepEqual(g.parseReply(charging, false), { capacity: 66, charging: true });
+  assert.equal(g.parseReply(reply(0xa4, 0), false).offline, true);
+  assert.equal(g.parseReply(reply(0xa0, 0), false), null);
+  const device = { vendorId: 0x258a, productId: 0x2023, channels: [{ usagePage: 0xffa0, usage: 1, interface: 1, path: 'a' }, { usagePage: 0xffff, usage: 1, interface: 2, path: 'b' }] };
+  assert.equal(detectDriver(device).id, 'sinowealth');
+  const layout = [{ usagePage: 1, usage: 2, path: 'm' }, { usagePage: 0xffa0, usage: 1, path: 'a' }, { usagePage: 0xffff, usage: 1, path: 'b' }, { usagePage: 0xffff, path: 'c' }];
+  assert.equal(detectDriver({ vendorId: 0x373e, productId: 0x001e, channels: layout }).id, 'sinowealth'); // LAMZU Maya X 8K
+  assert.equal(detectDriver({ vendorId: 0x2023, productId: 0xf013, channels: layout }).id, 'sinowealth'); // MCHOSE A5 2.4G
+  assert.notEqual((detectDriver({ vendorId: 0x373e, productId: 0x001e, channels: layout.slice(0, 1) }) || {}).id, 'sinowealth');
+});
+
+test('the Beken/Xenta receiver broadcast is read, and the link-blink frame is not a reading', () => {
+  const beken = require('../src/main/hid/drivers/beken');
+  assert.deepEqual(beken.parseFrame([0x03, 0xe5, 0x40, 0x01, 77]), { capacity: 77, charging: false });
+  assert.deepEqual(beken.parseFrame([0x03, 0xe5, 0x40, 0x03, 40]), { capacity: 40, charging: true });
+  assert.equal(beken.parseFrame([0x03, 0xe5, 0x01, 0x00, 0x00]), null);
+  assert.equal(beken.parseFrame([0x03, 0xe5, 0x40, 0x01, 0xc8]), null);
+  const channels = [{ usagePage: 1, usage: 2, path: 'm' }, { usagePage: 0x0a, path: 'v' }, { usagePage: 0x0b, path: 'w' }];
+  assert.equal(detectDriver({ vendorId: 0x1d57, productId: 0xfa60, channels }).id, 'beken');
+});
+
+test('Logitech G535 tries the HID++ collection first, then the media-key one HeadsetControl uses', () => {
+  const g535 = entry(0x046d, 0x0ac4);
+  const channels = [{ usagePage: 0x0c, usage: 1, interface: 3, path: 'media' }, { usagePage: 0xff43, usage: 0x0202, interface: 3, path: 'hidpp' }];
+  assert.deepEqual(channelsFor({ channels }, g535).map((c) => c.path), ['hidpp', 'media']);
+});
+
+test('ATK BitMouse receivers: the battery request is checksummed, and only an echo of it counts', () => {
+  const bm = require('../src/main/hid/drivers/bitmouse');
+  const req = bm.request(7);
+  assert.equal(req.length, 64);
+  assert.deepEqual(req.slice(0, 8), [0x08, 0x7d, 0x72, 0x02, 0x00, 0x01, 0x07, 0x01]);
+  assert.equal(bm.request(15)[1], 0x85);
+  const reply = (cmd, value) => { const f = new Array(64).fill(0); f[0] = 0x09; f[5] = cmd; f[7] = value; return f; };
+  assert.equal(bm.parseReply(reply(7, 64), 7), 64);
+  assert.equal(bm.parseReply(reply(15, 1), 7), null);
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  const nearlink = { vendorId: 0x373b, productId: 0x11dc, channels: [ch(0x0c, 1), ch(0xffb1, 1), ch(0xffb3, 1), ch(0xff05, 1), ch(1, 2), ch(1, 6)] };
+  assert.equal(detectDriver(nearlink).id, 'bitmouse');
+  const compx = { vendorId: 0x373b, productId: 0x101b, channels: [ch(0xff05, undefined), ch(0xff02, 2), ch(0xff04, 2), ch(1, 2)] };
+  assert.equal(detectDriver(compx).id, 'kysona');
+});
+
+test('ATK X1 NearLink asks for power info on report 5 and matches the request code', () => {
+  const x1 = entry(0x373b, 0x108b).steps[0];
+  assert.deepEqual(x1.request.slice(0, 4), [0x05, 0x01, 0x00, 0x1a]);
+  assert.deepEqual(x1.parse(frame([0x05, 0x01, 0x00, 0x1a, 0, 0, 0, 0, 71, 1])), { capacity: 71, charging: true });
+  assert.equal(x1.parse(frame([0x05, 0x02, 0x00, 0x1a, 0, 0, 0, 0, 71, 1])), null);
+  assert.equal(x1.parse(frame([0x05, 0x01, 0x00, 0x1a, 0, 0, 0, 0, 0, 0])).offline, true);
+});
+
+test('HyperX Cloud III, Cloud II Core and Cloud III S read the way auto94 documents', () => {
+  const iii = entry(0x03f0, 0x05b7).steps[0];
+  assert.deepEqual(iii.request.slice(0, 3), [0x66, 0x89, 0x00]);
+  assert.equal(iii.request.length, 52);
+  assert.deepEqual(iii.parse(frame([0x66, 0x89, 0, 0, 72])), { capacity: 72 });
+  assert.equal(iii.parse(frame([0x66, 0x0d, 0x0f, 0x53, 0x49])), null);
+  assert.equal(entry(0x03f0, 0x0995).steps[0].parse(frame([0x66, 0x89, 0, 0, 0xff])).offline, true);
+  const s = entry(0x03f0, 0x06be).steps[0];
+  assert.deepEqual(s.parse(frame([0x0c, 0x02, 0x03, 0x01, 0x00, 0x06, 40])), { capacity: 40 });
+  assert.equal(s.parse(frame([0x0c, 0x02, 0x03, 0x01, 0x00, 0x06, 0xff])).offline, true);
+  assert.ok(entry(0x03f0, 0x0d93)); // Cloud Stinger 2 Wireless
+});
+
+test('YJX-chip receivers answer the gmouse battery request on 0xFF01/0x0010', () => {
+  const yjx = require('../src/main/hid/drivers/yjx');
+  assert.deepEqual(yjx.REQUEST.slice(0, 9), [0x00, 0x55, 0x30, 0xa5, 0x0b, 0x2e, 0x01, 0x01, 0x01]);
+  assert.equal(yjx.REQUEST.length, 65);
+  assert.deepEqual(yjx.parseReply([0xaa, 0x30, 0, 0, 0, 0, 0, 0, 70, 1]), { capacity: 70, charging: true });
+  assert.equal(yjx.parseReply([0xaa, 0xfa, 0, 0, 0, 0, 0, 0, 70, 1]), null);
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  assert.equal(detectDriver({ vendorId: 0xa8a5, productId: 0x2255, channels: [ch(1, 2), ch(0xffa5, 0x88), ch(0xff01, 0x10)] }).id, 'yjx');
+  assert.equal(detectDriver({ vendorId: 0x249a, productId: 0x5c2f, channels: [ch(1, 2), ch(0xff01, 0x10)] }).id, 'yjx');
+});

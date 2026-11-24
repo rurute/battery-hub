@@ -21,6 +21,7 @@ const URL_LIMIT = 2000; // Windows can't open a link over 2081 characters
 const CUT_SHORT = '(Cut short to fit a link. Paste the full report here.)';
 const FRAMES_IN_REPORT = 12;
 const BYTES_PER_FRAME = 32;
+const KEYBOARD_REPEATS = 3;
 const BLUETOOTH_PATH = /0000(1124|1812)-0000-1000-8000-00805f9b34fb/i;
 const BRIEF_LINES = /^(Verdict|Windows|Package fingerprint|- (FAIL|WARN))/;
 const PC = 'pc';
@@ -271,15 +272,37 @@ function deviceFacts(request, live) {
   };
 }
 
-function frameLine(frame) {
-  const hex = frame.bytes.slice(0, BYTES_PER_FRAME).map((b) => b.toString(16).padStart(2, '0')).join('');
-  const more = frame.bytes.length > BYTES_PER_FRAME ? '...' : '';
-  return `${hex4(frame.usagePage)}:${hex4(frame.usage)} report ${frame.reportId}, seen ${frame.count}x: ${hex}${more}`;
+// A run of 6 varied, non-zero bytes looks like a Bluetooth address or a serial, so it's hidden.
+// A battery level is one byte among zeros and flags, so it survives this.
+function maskIds(bytes) {
+  const out = bytes.map((b) => b.toString(16).padStart(2, '0'));
+  for (let i = 0; i + 6 <= bytes.length; i++) {
+    const run = bytes.slice(i, i + 6);
+    if (run.every((b) => b !== 0 && b !== 0xff) && new Set(run).size >= 4) {
+      for (let j = i; j < i + 6; j++) out[j] = 'xx';
+      i += 5;
+    }
+  }
+  return out;
 }
 
-// What was tried and what came back. A scan's raw messages are public once sent, so a keyboard's
-// are left out because they can hold typed keys, and feature reports because they can hold the
-// device's address. Their sizes and counts still say a lot about the protocol.
+function frameLine(frame) {
+  const hex = maskIds(frame.bytes.slice(0, BYTES_PER_FRAME)).join('');
+  const more = frame.bytes.length > BYTES_PER_FRAME ? '...' : '';
+  const kind = frame.reportKind === 'input' ? '' : 'feature ';
+  return `${hex4(frame.usagePage)}:${hex4(frame.usage)} ${kind}report ${frame.reportId}, seen ${frame.count}x: ${hex}${more}`;
+}
+
+// Pages that carry movement, keys or media keys. Frames from any other page are the device's own.
+const INPUT_PAGES = new Set([0x01, 0x07, 0x0c, 0x0d]);
+const isOwnPage = (frame) => !INPUT_PAGES.has(frame.usagePage);
+
+// What was tried and what came back, with the bytes: they're what a battery gets decoded from.
+// A scan's messages are public once sent, so:
+//   - a keyboard's typing channels are left out, and of its own channels only messages
+//     seen KEYBOARD_REPEATS times or more: those are status messages. Typed keys each show once,
+//     and the order is lost, so nothing typed can be read back from what's kept
+//   - anything that looks like an address or serial is masked (maskIds)
 function scanLines({ scans = [], frames = [], lastError, failedReads }, facts) {
   const lines = [`Channels: ${facts.channels.join(', ') || 'unknown'}`];
   if (failedReads) lines.push(`Failed reads in a row: ${failedReads}`);
@@ -288,11 +311,19 @@ function scanLines({ scans = [], frames = [], lastError, failedReads }, facts) {
     const outcome = scan.error ? `failed (${scan.error})` : scan.captured ? count(scan.captured, 'message') : 'nothing captured';
     lines.push(`Scan ${i + 1}: ${outcome}`);
   });
-  const feature = frames.filter((f) => f.reportKind !== 'input');
-  const input = frames.filter((f) => f.reportKind === 'input').sort((a, b) => b.count - a.count);
-  if (feature.length) lines.push(`Feature reports: ${[...new Set(feature.map((f) => `${f.reportId} (${f.bytes.length} bytes)`))].join(', ')}`);
-  if (input.length && facts.hasKeyboard) lines.push(`Input messages: ${input.length}, left out because this device has a keyboard`);
-  else lines.push(...input.slice(0, FRAMES_IN_REPORT).map(frameLine));
+  const seen = new Set();
+  const unique = frames.filter((f) => {
+    const key = `${f.usagePage}:${f.usage}:${f.reportKind}:${f.reportId}:${f.bytes.join(',')}`;
+    return !seen.has(key) && seen.add(key);
+  });
+  const feature = unique.filter((f) => f.reportKind !== 'input');
+  let input = unique.filter((f) => f.reportKind === 'input').sort((a, b) => b.count - a.count);
+  if (facts.hasKeyboard) {
+    const kept = input.filter((f) => isOwnPage(f) && f.count >= KEYBOARD_REPEATS);
+    if (kept.length < input.length) lines.push(`Input messages: ${input.length - kept.length} left out because this device has a keyboard`);
+    input = kept;
+  }
+  lines.push(...[...feature, ...input].slice(0, FRAMES_IN_REPORT).map(frameLine));
   return lines;
 }
 
@@ -361,6 +392,30 @@ async function deviceReport(deps, request, live) {
   };
 }
 
+// "It works": a device set up with the scan reads right. The profile says exactly where its
+// battery is, so it can be built in for everyone, and the device goes on the Works with list.
+// Nothing here is checked first: the person is only confirming what they see.
+function worksReport(deps, request, live) {
+  const facts = deviceFacts(request, live);
+  const [vendor, product] = facts.hardware.toUpperCase().split(':');
+  const p = request.profile || {};
+  const how = request.profile
+    ? `${p.reportKind} report ${p.reportId} on ${hex4(p.usagePage)}:${hex4(p.usage ?? 0)}, byte ${p.byteOffset} of ${p.readLength}, ${p.scaleMin}-${p.scaleMax} is 0-100%`
+    : `driver ${facts.driver}`;
+  const level = Number.isFinite(request.capacity) ? `${request.capacity}%` : 'unknown';
+  return {
+    hardware: product ? `${vendor}:${product}` : null,
+    ...issueLink('works.yml', {
+      title: `[Works] ${facts.product}`,
+      device: [facts.manufacturer, facts.product].filter(Boolean).join(' '),
+      connection: facts.connection,
+      ids: product ? `VID_${vendor} / PID_${product}` : facts.hardware,
+      how: sanitize(`${how}\nBattery Hub shows: ${level}`),
+      version: deps.version,
+    }),
+  };
+}
+
 async function fetchLatestVersion(fetcher) {
   const response = await fetcher(LATEST_RELEASE, { headers: { 'User-Agent': 'Battery-Hub', Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`status ${response.status}`);
@@ -388,4 +443,4 @@ async function runChecks(deps) {
   return { checks: shown, verdict, report, ...requestUrl(report) };
 }
 
-module.exports = { runChecks, deviceReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage };
+module.exports = { runChecks, deviceReport, worksReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage };

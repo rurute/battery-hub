@@ -422,6 +422,17 @@ ipcMain.handle('support:mark-reported', (evt, hardware) => {
   store.setSettings({ reportedDevices: { ...(store.getSetting('reportedDevices') || {}), [hardware]: Date.now() } });
 });
 
+// "It works": opens the filled-in form, and remembers the device so the card doesn't come back.
+ipcMain.handle('support:works-report', async (evt, id) => {
+  const device = store.getDevices()[id];
+  if (!device) throw new Error('This device is no longer saved');
+  const live = await hidClient.enumerate().catch(() => []);
+  const capacity = device.lastReading ? device.lastReading.capacity : null;
+  const result = diagnostics.worksReport(supportDeps(), { ...device, capacity }, live.find((d) => d.id === id));
+  store.setSettings({ confirmedDevices: { ...(store.getSetting('confirmedDevices') || {}), [id]: Date.now() } });
+  return result;
+});
+
 ipcMain.handle('support:run', () => diagnostics.runChecks(supportDeps()));
 
 ipcMain.handle('support:device-report', async (evt, request) => {

@@ -2,13 +2,18 @@
 const { exchange } = require('./exchange');
 const table = require('./table');
 
-// The collection a table entry names; with none named, every vendor collection is a candidate.
+// The collections a table entry names, in the order named (a list is tried rule by rule); with
+// none named, every vendor collection is a candidate.
 function channelsFor(logicalDevice, entry) {
-  const rule = entry.channel;
-  if (!rule) return logicalDevice.channels.filter((c) => c.usagePage >= 0xff00);
-  return logicalDevice.channels.filter((c) => (rule.usagePage === undefined || c.usagePage === rule.usagePage)
-    && (rule.usage === undefined || c.usage === rule.usage)
-    && (rule.interface === undefined || c.interface === rule.interface));
+  const rules = entry.channel ? [].concat(entry.channel) : null;
+  if (!rules) return logicalDevice.channels.filter((c) => c.usagePage >= 0xff00);
+  // usage: null asks for the collection Windows gives no usage for.
+  const fits = (rule, c) => (rule.usagePage === undefined || c.usagePage === rule.usagePage)
+    && (rule.usage === undefined || (rule.usage === null ? c.usage == null : c.usage === rule.usage))
+    && (rule.interface === undefined || c.interface === rule.interface);
+  const found = [];
+  for (const rule of rules) for (const c of logicalDevice.channels) if (fits(rule, c) && !found.includes(c)) found.push(c);
+  return found;
 }
 
 function matches(logicalDevice) {

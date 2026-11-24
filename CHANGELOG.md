@@ -6,6 +6,49 @@ All notable changes to this project are documented here. Versions follow
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-11-24
+
+### Added
+
+- Corsair Void Wireless v2, HS80 MAX, Virtuoso MAX, Virtuoso SE and Virtuoso XT headsets
+  (issues #97, #99, #100), using the protocol HeadsetControl documents.
+- MCHOSE V9 PRO (issue #43), Astro A50 Gen 4 (issue #35) and Astro A50 Gen 5 (issue #53) headsets,
+  also from HeadsetControl.
+- MCHOSE mice: A7 V2 Ultra, A5 Ultra, K7 Ultra and A7 Ultra (issues #54, #68, #77, #80, #130, #142,
+  #161), and MCHOSE G75 V2, G87 V2, K87S and K99 V3 keyboards on their 2.4G receiver (issue #50).
+  Both protocols are read from MCHOSE's own web driver.
+- Glorious Model O, O-, D and D- Wireless (issue #45), LAMZU Maya X and other LAMZU mice (issue #146),
+  and the MCHOSE A5 2.4G (issue #115), which share one receiver chip. The protocol comes from mxw
+  and LAMZU's own web driver.
+- The Beken/Xenta 2.4G receiver 1d57:fa60 used by Attack Shark and other mice (issues #20, #73), from
+  Attack Shark Battery KDE.
+- ATK mice on BitMouse receivers, NearLink and 2.4G (issues #60, #79, #93, #122), and the ATK X1
+  NearLink (issue #129), read from ATK's own web driver.
+- HyperX Cloud III Wireless, Cloud III S Wireless, Cloud II Core Wireless and Cloud Stinger 2 Wireless
+  (issues #33, #117, #145), from auto94's HyperX-Cloud-2-Battery-Monitor.
+- Mice on YJX-chip receivers (issues #85, #112, #157), read the way MCHOSE's web driver reads its
+  G-series mice on the same platform.
+- Corsair Slipstream receiver (issue #46), for the mouse or keyboard paired with it.
+- Mice on the same Compx receiver chip as VXE: ATK, MADLIONS and other Compx receivers (issues #6,
+  #61, #82, #92, #98, #111, #114, #121, #126, #135, #136). Linux reads one of them (373b:1085) the
+  same way.
+- "It works! Let the developer know": a device you set up with the scan that reads fine asks
+  whether the level is right. A yes opens a filled-in GitHub form, which puts the device on the
+  Works with list and helps build it in for everyone.
+
+### Fixed
+
+- Logitech G535 (issue #143): "Cannot write to hid device". It is now asked on its HID++ collection
+  first, which Windows lets the app write to.
+
+### Changed
+
+- The scan now also listens on standard collections that carry no movement or keys. Some receivers
+  broadcast their battery there, and the scan used to miss it.
+- Device reports now include the bytes the scan caught, which is what a battery gets decoded from.
+  Before, most only said how many messages came in. A keyboard's typing stays out, and anything
+  that looks like an address or serial is masked.
+
 ## [2.0.4] - 2026-11-22
 
 ### Added
@@ -297,7 +340,8 @@ First stable release, consolidating the 1.0.x and 1.1.x series.
 Initial public release: live battery monitoring for wireless HID devices, per-device tray
 icons, low-battery notifications, history sparklines and the guided calibration wizard.
 
-[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.4...HEAD
+[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.5...HEAD
+[2.0.5]: https://github.com/battery-hub/battery-hub/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/battery-hub/battery-hub/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/battery-hub/battery-hub/compare/v2.0.2...v2.0.3
 [1.3.1]: https://github.com/battery-hub/battery-hub/releases/tag/v1.3.1

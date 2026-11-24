@@ -300,15 +300,28 @@ test('what a keyboard sends never goes in a report', async () => {
   const typed = [1, 0, 0, 0x13, 0x04, 0x16, 0x16, 0x1a];
   const result = await reportFor({ frames: [inputFrame(typed, 1)] }, { channels: [vendorChannel, { usagePage: 1, usage: 6, path: 'x' }] });
   assert.ok(!/1304161a|13 04 16/.test(result.report + decodeURIComponent(result.url)));
-  assert.match(result.form.get('scan'), /Input messages: 1, left out because this device has a keyboard/);
+  assert.match(result.form.get('scan'), /Input messages: 1 left out because this device has a keyboard/);
 });
 
-test('the contents of a feature report stay out, but its size is kept', async () => {
+test("a keyboard's own status messages are kept, so its battery can be found", async () => {
+  const status = { usagePage: 0xff02, usage: 2, reportKind: 'input', reportId: 0x13, bytes: [0x13, 0x0a, 0x01, 0x00, 0x04, 0x05, 0x3e, 0x10], count: 4 };
+  const once = { ...status, bytes: [0x13, 0, 0, 0x04], count: 2 };
+  const typed = { ...inputFrame([1, 0, 0, 0x13, 0x04], 1), usagePage: 1, usage: 6 };
+  const result = await reportFor({ frames: [status, once, typed] }, { channels: [vendorChannel, { usagePage: 1, usage: 6, path: 'x' }] });
+  const scan = result.form.get('scan');
+  assert.match(scan, /^ff02:0002 report 19, seen 4x: 130a010004053e10$/m);
+  assert.match(scan, /Input messages: 2 left out/);
+  assert.ok(!/13000004|0100001304/.test(scan));
+});
+
+test('a feature report is sent with anything like an address masked', async () => {
   const address = [0x09, 0x5c, 0xea, 0xe2, 0x9a, 0x3a, 0x14];
   const feature = { usagePage: 0xff00, usage: 1, reportKind: 'feature', reportId: 9, bytes: address, count: 2 };
   const result = await reportFor({ frames: [feature, feature] }, { channels: [vendorChannel] });
   assert.ok(!/5cea|143a/i.test(result.report + decodeURIComponent(result.url)));
-  assert.match(result.form.get('scan'), /^Feature reports: 9 \(7 bytes\)$/m);
+  assert.match(result.form.get('scan'), /^ff00:0001 feature report 9, seen 2x: xxxxxxxxxxxx14$/m);
+  const level = { ...feature, bytes: [0x05, 0x01, 0x00, 0x3e, 0x00, 0x00, 0x00] };
+  assert.match((await reportFor({ frames: [level] }, { channels: [vendorChannel] })).form.get('scan'), /: 0501003e000000$/m);
 });
 
 test('a Bluetooth device is called Bluetooth, on either kind of link', async () => {
@@ -425,4 +438,26 @@ test('if GitHub search cannot be reached, nothing is blocked', async () => {
     return { ok: true, json: async () => ({ tag_name: 'v1.3.1' }) };
   };
   assert.equal((await gateFor({ fetcher })).gate, null);
+});
+
+test('an It works report says where the battery is, with nothing private', () => {
+  const { worksReport } = require('../src/main/diagnostics');
+  const profile = { usagePage: 0xff00, usage: 1, reportKind: 'input', reportId: 5, readLength: 8, byteOffset: 3, scaleMin: 0, scaleMax: 100 };
+  const result = worksReport({ version: '2.0.5' }, { id: '13652:62858:secret', product: 'VXE R1 Pro', manufacturer: 'VXE', driverId: 'generic', profile, capacity: 62 }, null);
+  const url = decodeURIComponent(result.url);
+  assert.equal(result.hardware, '3554:F58A');
+  assert.match(url, /template=works\.yml/);
+  assert.match(url, /title=\[Works\] VXE R1 Pro/);
+  assert.match(url, /input report 5 on ff00:0001, byte 3 of 8, 0-100 is 0-100%/);
+  assert.match(url, /Battery Hub shows: 62%/);
+  assert.ok(!/secret/.test(url));
+});
+
+test("a keyboard receiver's broadcast on an odd standard page is kept, its typing is not", async () => {
+  const broadcast = { usagePage: 0x0a, usage: 0, reportKind: 'input', reportId: 3, bytes: [0x03, 0xe5, 0x40, 0x01, 0x4d], count: 12 };
+  const typed = { usagePage: 0x01, usage: 6, reportKind: 'input', reportId: 1, bytes: [1, 0, 0, 0x13, 0x04], count: 5 };
+  const result = await reportFor({ frames: [broadcast, typed] }, { channels: [vendorChannel, { usagePage: 1, usage: 6, path: 'x' }] });
+  const scan = result.form.get('scan');
+  assert.match(scan, /^000a:0000 report 3, seen 12x: 03e540014d$/m);
+  assert.ok(!/0100001304/.test(scan));
 });

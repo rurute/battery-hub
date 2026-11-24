@@ -227,6 +227,49 @@ function offerReadReport(dev) {
   slot.replaceChildren(...(wanted ? [deviceReportCard({ id, product, manufacturer, driverId, lastError, failedReads })] : []));
 }
 
+// A device set up with the scan that reads fine gets a card asking if the level is right. A yes
+// opens a filled-in "It works" form: that's how working devices become known, since the app
+// sends nothing by itself. Shown once per device.
+let confirmedDevices = null;
+const isWorking = (dev) => dev.driverId === 'generic' && dev.profile && !dev.failedReads && !isOffline(dev)
+  && dev.lastReading && Number.isFinite(dev.lastReading.capacity);
+
+async function offerWorksReport(dev) {
+  const slot = document.getElementById('detail-works');
+  if (!confirmedDevices) {
+    confirmedDevices = (await window.batteryHub.getSettings().catch(() => ({}))).confirmedDevices || {};
+  }
+  const wanted = isWorking(dev) && !confirmedDevices[dev.id] ? dev.id : '';
+  if (slot.dataset.device === wanted) return;
+  slot.dataset.device = wanted;
+  if (!wanted) { slot.replaceChildren(); return; }
+  const card = document.createElement('div');
+  card.className = 'step-card';
+  const yes = document.createElement('button');
+  yes.className = 'btn btn-primary';
+  yes.textContent = 'It works! Let the developer know';
+  const note = supportText('div', 'check-note', `Opens GitHub with the device filled in, so it can be listed and built in for everyone. Nothing is posted until you submit it there. ${PRIVACY_NOTE}`);
+  yes.addEventListener('click', async () => {
+    yes.disabled = true;
+    try {
+      const result = await window.batteryHub.worksReport(dev.id);
+      confirmedDevices[dev.id] = Date.now();
+      await window.batteryHub.openExternal(result.url);
+      card.replaceChildren(supportText('div', 'step-title', 'Thank you!'), supportText('div', 'check-note', 'Your browser opened the form. Submit it there to add this device to the list.'));
+    } catch (e) {
+      yes.disabled = false;
+      note.textContent = `The form couldn't be opened: ${plainError(e)}`;
+    }
+  });
+  card.append(
+    supportText('div', 'step-title', 'Is this battery level right?'),
+    supportText('div', 'step-desc', 'If it matches what the device or its own app shows, tell us it works.'),
+    checkActions(yes),
+    note,
+  );
+  slot.replaceChildren(card);
+}
+
 supportRun.addEventListener('click', async () => {
   supportRun.disabled = true;
   supportRun.textContent = 'Checking…';

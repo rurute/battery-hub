@@ -3,9 +3,9 @@
 //
 // Vendor-defined collections (usagePage >= 0xFF00) get the full treatment: listen for input
 // frames AND write output pings, because that is where battery usually lives and where
-// writing is safe. Standard collections (mouse/keyboard, usagePage < 0xFF00) are probed
-// READ-ONLY with feature reports: no writes, and no input listening, which would flood with
-// movement data. This gives devices with no vendor collection, or that reject writes
+// writing is safe. Other standard pages that carry no movement or keys are listened to too.
+// Mouse, keyboard and media-key collections are probed READ-ONLY with feature reports: no
+// writes, and no input listening, which would flood with movement data or catch typing. This gives devices with no vendor collection, or that reject writes
 // ("Cannot write to hid device"), a fallback path.
 //
 // Handles stay open afterwards (see session.js); hid-client recycles this worker once the
@@ -20,6 +20,9 @@ const READ_SLICE_MS = 100;
 const FEATURE_IDS_TO_TRY = [1, 2, 3, 4, 5, 6, 7, 8];
 const FEATURE_LENGTHS_TO_TRY = [8, 16, 32];
 const VENDOR_USAGE_PAGE_MIN = 0xFF00;
+// Pages that carry movement, keys or media keys. Anything else is listened to as well: some
+// receivers broadcast their battery on an odd standard page (the Beken 1d57:fa60 uses 0x0A/0x0B).
+const INPUT_PAGES = new Set([0x01, 0x07, 0x0c, 0x0d]);
 const PROGRESS_MS = 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -66,7 +69,7 @@ async function capture(logicalDevice, { pingOutputs = true, onProgress = null } 
       return; // OS often holds standard input channels exclusively; skip those
     }
     const isVendor = channel.usagePage >= VENDOR_USAGE_PAGE_MIN;
-    let listening = isVendor;
+    let listening = isVendor || !INPUT_PAGES.has(channel.usagePage);
 
     // Sweep once, then only re-poll the reports this collection actually has.
     const supported = [];

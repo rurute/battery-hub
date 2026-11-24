@@ -1,0 +1,40 @@
+name: It works
+description: A device you set up in Battery Hub reads its battery correctly
+title: "[Works] "
+labels: ["works"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Battery Hub filled this in from your device. It puts the device on the
+        **Works with** list, and helps build it in so others don't need the setup scan.
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+    validations:
+      required: true
+
+  - type: input
+    id: connection
+    attributes:
+      label: Connection
+
+  - type: input
+    id: ids
+    attributes:
+      label: Vendor / Product ID
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: How the battery is read
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Battery Hub version

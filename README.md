@@ -7,7 +7,8 @@
   <a href="https://github.com/battery-hub/battery-hub/releases"><img src="https://img.shields.io/github/downloads/battery-hub/battery-hub/total" alt="Downloads" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/battery-hub/battery-hub" alt="License" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6" alt="Platform: Windows 10/11" />
-  <a href="https://buymeacoffee.com/batteryhub"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=000000" alt="Buy me a coffee" /></a>
+
+  <p><a href="https://buymeacoffee.com/batteryhub"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=000000" height="34" alt="Buy me a coffee" /></a></p>
 </div>
 
 ---
@@ -49,7 +50,7 @@ Windows SmartScreen shows a **"Windows protected your PC"** prompt because the i
 Every release is built and published by [GitHub Actions](.github/workflows/release.yml) directly from a tagged commit — no binaries are uploaded by hand — and each one ships a `SHA256SUMS.txt`. To confirm your download matches, run:
 
 ```powershell
-(Get-FileHash "Battery-Hub-Installer-2.0.4.exe" -Algorithm SHA256).Hash
+(Get-FileHash "Battery-Hub-Installer-2.0.5.exe" -Algorithm SHA256).Hash
 ```
 
 and compare the result with the checksum in that release's `SHA256SUMS.txt`. Pasting the same hash into [VirusTotal](https://www.virustotal.com/gui/home/search) will show any scan results for the exact file.
@@ -98,11 +99,14 @@ Battery Hub reads these directly. Anything else can usually be added with **Set 
 | Logitech | Mice and keyboards using HID++ 2.0 (Bolt, Unifying, Lightspeed); G PRO, G533, G535, G633, G733, G933, G935 headsets |
 | Razer | 81 wireless mice and keyboards |
 | SteelSeries | Arctis 1, 7, 7+, 9, Nova 3P, Nova 5, Nova 7, Nova Pro Wireless headsets; Aerox, Prime and Rival 3 Wireless mice |
-| HyperX | Cloud Alpha Wireless, Cloud Flight, Cloud II Wireless |
-| Corsair | Void and Virtuoso headsets |
+| HyperX | Cloud Alpha Wireless, Cloud Flight, Cloud II Wireless, Cloud II Core Wireless, Cloud III Wireless, Cloud III S Wireless, Cloud Stinger 2 Wireless |
+| Corsair | Void, Void Wireless v2, HS80 MAX, Virtuoso, Virtuoso SE, XT and MAX headsets; Slipstream receiver |
 | Audeze | Maxwell, Maxwell 2 |
-| MCHOSE | V9 Turbo+, X9 |
-| VXE, ATK | Dragonfly R1 Pro, NordicMouse and other Kysona-based mice |
+| Astro | A50 Gen 4, A50 Gen 5 |
+| MCHOSE | V9 Turbo+, V9 PRO, X9 headsets; A7 V2 Ultra, A5 Ultra, K7 Ultra, A7 Ultra mice; G75 V2, G87 V2, K87S, K99 V3 keyboards |
+| VXE, ATK, MADLIONS | Dragonfly R1 Pro, NordicMouse and other mice on Compx receivers; ATK NearLink and BitMouse receivers, X1 NearLink |
+| Glorious, LAMZU | Model O, O-, D, D- Wireless; Maya X and other LAMZU mice |
+| Beken/Xenta 2.4G receiver | Attack Shark and other mice on 1d57:fa60 |
 | Compx 2.4G receiver | AULA F87 Pro and F99 Pro, Lingbao K98, MCHOSE G75 keyboards |
 
 Tested on real hardware: VXE NordicMouse, MCHOSE V9 Turbo+, DualSense on USB and Bluetooth, and Logitech MX Master 4 over Bluetooth. The rest are built from the protocols documented by the projects below and checked against those byte layouts, so please [report a device](https://github.com/battery-hub/battery-hub/issues/new?template=device-support.yml) if one misbehaves.

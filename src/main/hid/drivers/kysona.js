@@ -25,10 +25,18 @@ const REPOKE_MS = 500; // this firmware often ignores a single request; poke unt
 const READ_SLICE_MS = 100;
 
 const KNOWN_VENDOR_IDS = new Set([0x3554]); // VXE
+// Other brands on the same Compx receiver chip: ATK/MADLIONS (0x373B, which Linux's hid-pulsar
+// lists for the VXE R1 SE dongle 373b:1085), and receivers that call themselves Compx under
+// 0x25A7 and 0x260D. They're only claimed with the chip's own layout, the command collection
+// 0xFF02/0x0002 next to 0xFF04/0x0002: the same name sits on other chips (NearLink, 0xFFB1).
+const COMPX_CHIP_VENDOR_IDS = new Set([0x373b, 0x25a7, 0x260d]);
+const hasCollection = (logicalDevice, usagePage, usage) => logicalDevice.channels.some((c) => c.usagePage === usagePage && c.usage === usage);
+const hasCompxLayout = (logicalDevice) => hasCollection(logicalDevice, 0xff02, 0x0002) && hasCollection(logicalDevice, 0xff04, 0x0002);
 
 function matches(logicalDevice) {
-  if (!KNOWN_VENDOR_IDS.has(logicalDevice.vendorId) || compx.matches(logicalDevice)) return false;
-  return !!findChannel(logicalDevice, USAGE_PAGE_COMMAND);
+  if (compx.matches(logicalDevice)) return false;
+  if (KNOWN_VENDOR_IDS.has(logicalDevice.vendorId)) return !!findChannel(logicalDevice, USAGE_PAGE_COMMAND);
+  return COMPX_CHIP_VENDOR_IDS.has(logicalDevice.vendorId) && hasCompxLayout(logicalDevice);
 }
 
 // Turn one raw frame into a reading, or null if it isn't a usable battery frame.

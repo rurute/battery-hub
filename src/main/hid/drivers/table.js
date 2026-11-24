@@ -72,6 +72,30 @@ function cloud2Step(command, parse) {
   };
 }
 
+// ---- Corsair "Bragi" headsets: properties read with GET, from HeadsetControl's corsair_void_v2w
+// and corsair_virtuoso_xt. A request goes to 0x08 (the receiver) or 0x09 (the headset behind it).
+// Replies: [0] 0x01, [1] 0x00 receiver / 0x01 headset, [2] command echo, [3] status, [4..5] value.
+// Status 0x05 ("no such property") is the receiver answering for a headset that isn't there.
+// The battery is property 0x0f, in tenths of a percent. The reply doesn't repeat the property, so
+// a value outside 1-1000 (another program's answer) is skipped, as HeadsetControl does.
+const BRAGI_RECEIVER = 0x08;
+const BRAGI_HEADSET = 0x09;
+const BRAGI_GET = 0x02;
+
+function bragiStep(prefix, target, property, parse) {
+  const unnumbered = prefix.length > 0; // the newer receivers take a 65-byte write with a leading 0
+  return {
+    request: pad([...prefix, 0x02, target, BRAGI_GET, property, 0x00], unnumbered ? 65 : 64),
+    parse(f) {
+      if (f.length < 6 || f[0] !== 0x01 || f[2] !== BRAGI_GET) return null;
+      if (f[1] !== (target === BRAGI_HEADSET ? 0x01 : 0x00)) return f[3] === 0x05 ? OFFLINE : null;
+      if (f[3] === 0x05) return OFFLINE;
+      return f[3] === 0x00 ? parse(f[4] | (f[5] << 8)) : null;
+    },
+  };
+}
+const bragiBattery = (value) => (value >= 1 && value <= 1000 ? { capacity: clampPercent(Math.round(value / 10)) } : null);
+
 function alphaStep(command, parse) {
   return {
     request: pad([0x21, 0xbb, command], 31),
@@ -158,12 +182,65 @@ const DEVICES = [
     }],
   },
   {
-    name: 'HyperX Cloud II Wireless', kind: 'headset', vendorId: HP, productIds: [0x0696, 0x018b],
+    // From auto94's HyperX-Cloud-2-Battery-Monitor (MainForm.cpp, tested on the Core on Windows):
+    // write 66 89, the reply carries the level at byte 4 (issues #117, #145). The Cloud III answers
+    // on 0xFF13/0x0001; for the Core that project takes the collection with the highest usage.
+    name: 'HyperX Cloud III Wireless', kind: 'headset', vendorId: HP, productIds: [0x05b7, 0x0c9d],
+    channel: { usagePage: 0xff13, usage: 0x01 },
+    steps: [{ request: pad([0x66, 0x89], 52), parse: (f) => (f.length < 5 || f[0] !== 0x66 || f[1] !== 0x89 ? null : f[4] > 100 ? OFFLINE : { capacity: f[4] }) }],
+  },
+  {
+    name: 'HyperX Cloud II Core Wireless', kind: 'headset', vendorId: HP, productIds: [0x0995],
+    steps: [{ request: pad([0x66, 0x89], 52), parse: (f) => (f.length < 5 || f[0] !== 0x66 || f[1] !== 0x89 ? null : f[4] > 100 ? OFFLINE : { capacity: f[4] }) }],
+  },
+  {
+    // Same project: 0c 02 03 01 00 06 on collection 0x01C0/0x0001, level at byte 6, 0xff while off
+    // (issue #33).
+    name: 'HyperX Cloud III S Wireless', kind: 'headset', vendorId: HP, productIds: [0x06be],
+    channel: { usagePage: 0x01c0, usage: 0x01 },
+    steps: [{ request: pad([0x0c, 0x02, 0x03, 0x01, 0x00, 0x06], 52), parse: (f) => (f.length < 7 || f[0] !== 0x0c || f[5] !== 0x06 ? null : f[6] > 100 ? OFFLINE : { capacity: f[6] }) }],
+  },
+  {
+    // 0x0d93 is the Cloud Stinger 2 Wireless, which auto94's HyperX-Cloud-2-Battery-Monitor reads the same way.
+    name: 'HyperX Cloud II Wireless', kind: 'headset', vendorId: HP, productIds: [0x0696, 0x018b, 0x0d93],
     channel: { usagePage: 0xff90, usage: 0x0303, interface: 0 },
     steps: [
       cloud2Step(0x02, (f) => ({ capacity: clampPercent(f[7]) })),
       cloud2Step(0x03, (f) => ({ charging: f[4] === 1 })),
     ],
+  },
+  {
+    // Woken the way HeadsetControl does it without switching to software mode (which pops in the
+    // headset): the receiver's firmware and a heartbeat, then a heartbeat to the headset.
+    name: 'Corsair Void Wireless v2, HS80 MAX, Virtuoso MAX', kind: 'headset', vendorId: 0x1b1c,
+    productIds: [0x2a08, 0x0a97, 0x2a02],
+    channel: { usagePage: 0xff42 },
+    steps: [
+      bragiStep([0x00], BRAGI_RECEIVER, 0x13, () => ({})),
+      bragiStep([0x00], BRAGI_RECEIVER, 0x12, () => ({})),
+      bragiStep([0x00], BRAGI_HEADSET, 0x12, () => ({})),
+      bragiStep([0x00], BRAGI_HEADSET, 0x0f, bragiBattery),
+    ],
+  },
+  {
+    // The Slipstream receiver (issue #46) relays to its mouse or keyboard over the same Bragi
+    // properties, with the same collections. OpenLinkHub (src/devices/slipstream) puts a single
+    // paired device at 0x09; with several paired, this reads the first one only.
+    name: 'Corsair Slipstream receiver', kind: 'mouse', vendorId: 0x1b1c,
+    productIds: [0x1bdc],
+    channel: { usagePage: 0xff42 },
+    steps: [
+      bragiStep([0x00], BRAGI_RECEIVER, 0x12, () => ({})),
+      bragiStep([0x00], BRAGI_HEADSET, 0x0f, bragiBattery),
+    ],
+  },
+  {
+    // 0x0a40 is a Virtuoso SE receiver HeadsetControl doesn't list yet (issue #99); its scan shows
+    // the same Bragi replies.
+    name: 'Corsair Virtuoso SE and XT', kind: 'headset', vendorId: 0x1b1c,
+    productIds: [0x0a3e, 0x0a3d, 0x0a40, 0x0a64],
+    channel: { usagePage: 0xff42, usage: 0x01 },
+    steps: [bragiStep([], BRAGI_HEADSET, 0x0f, bragiBattery)],
   },
   {
     name: 'Corsair Void and Virtuoso', kind: 'headset', vendorId: 0x1b1c,
@@ -187,6 +264,62 @@ const DEVICES = [
     }],
   },
   {
+    // HeadsetControl logitech_astro_a50_gen4 (issue #35): one reply per request, 02 STATUS LEN
+    // PAYLOAD, status 0x02 = ok with payload. The base keeps the last level after the headset is
+    // off, so the link (0x54, bit 1) is asked first. Battery 0x7c: bit 7 charging, the rest percent.
+    name: 'Astro A50 Gen 4', kind: 'headset', vendorId: 0x9886, productIds: [0x002c],
+    channel: { usagePage: 0xff32, usage: 0x74 },
+    steps: [
+      { request: pad([0x02, 0x54, 0x00], 64), parse: (f) => (f.length < 4 || f[0] !== 0x02 || f[1] !== 0x02 ? null : f[3] & 0x02 ? {} : OFFLINE) },
+      { request: pad([0x02, 0x7c, 0x00], 64), parse: (f) => (f.length < 4 || f[0] !== 0x02 || f[1] !== 0x02 ? null : { capacity: clampPercent(f[3] & 0x7f), charging: !!(f[3] & 0x80) }) },
+    ],
+  },
+  {
+    // HeadsetControl logitech_astro_a50 (Gen 5 base, issue #53): 02 0c LEN 00 CMD HANDLE ...;
+    // battery is CMD 0x06, reply byte 6 = percent, byte 8 = docked/charging. Matched on CMD.
+    name: 'Astro A50 Gen 5', kind: 'headset', vendorId: LOGITECH, productIds: [0x0b1c],
+    channel: { usagePage: 0xff32 },
+    steps: [{
+      request: pad([0x02, 0x0c, 0x03, 0x00, 0x06, 0x0c], 64),
+      parse: (f) => (f.length < 9 || f[0] !== 0x02 || f[1] !== 0x0c || f[4] !== 0x06 ? null : { capacity: clampPercent(f[6]), charging: f[8] !== 0 }),
+    }],
+  },
+  {
+    // MCHOSE keyboards on the 3837:3033 2.4G receiver (G75 V2, G87 V2, K87S, K99 V3; issue #50).
+    // From MCHOSE's own web driver (mchose.com.cn, the "glw" family): an unnumbered 64-byte report
+    // on the collection with no usage, 55 <command> 00 <sum of the next four> <size> <offset lo hi>
+    // 00. Command 4 reads the base info; the reply starts aa 04, and its byte 32 (40 in the frame)
+    // holds the level in the low 7 bits and charging in the top bit.
+    name: 'MCHOSE G75 V2, G87 V2, K87S, K99 V3 (2.4G)', kind: 'keyboard', vendorId: 0x3837, productIds: [0x3033],
+    channel: { usagePage: 0x01, usage: null },
+    steps: [{
+      request: pad([0x00, 0x55, 0x04, 0x00, 0x38, 0x38, 0x00, 0x00, 0x00], 65),
+      parse: (f) => (f.length < 41 || f[0] !== 0xaa || f[1] !== 0x04 || f[5] !== 0 || f[6] !== 0 ? null
+        : (f[40] & 0x7f) === 0 ? null : { capacity: clampPercent(f[40] & 0x7f), charging: !!(f[40] & 0x80) }),
+    }],
+  },
+  {
+    // ATK X1 NearLink (issue #129), from ATK's web driver (v3-hub.atkgear.com, the Evision mouse
+    // class, isEvisionWireless 0x108b/0x108c): report 5, <request code lo hi> 1a = power info. The
+    // reply starts with the same request code; data from byte 7 holds the level, then charging.
+    name: 'ATK X1 NearLink', kind: 'mouse', vendorId: 0x373b, productIds: [0x108b, 0x108c],
+    channel: [{ usagePage: 0xffb1 }, { usagePage: 0xffb2 }],
+    steps: [{
+      request: pad([0x05, 0x01, 0x00, 0x1a], 64),
+      parse: (f) => (f.length < 10 || f[1] !== 0x01 || f[2] !== 0x00 ? null
+        : f[8] === 0 || f[8] > 100 ? OFFLINE : { capacity: f[8], charging: f[9] > 0 }),
+    }],
+  },
+  {
+    // The X9's protocol behind a C-Media dongle (HeadsetControl mchose_v9_pro, issue #43).
+    name: 'MCHOSE V9 PRO', kind: 'headset', vendorId: 0x291d, productIds: [0x385d],
+    channel: { usagePage: 0xff90 },
+    steps: [{
+      request: pad([0x55, 0x65, 0x01], 64),
+      parse: (f) => (f.length >= 4 && f[0] === 0x55 && f[1] === 0x65 && f[3] === 0x02 ? { capacity: clampPercent(f[2]) } : null),
+    }],
+  },
+  {
     name: 'Logitech G633, G733, G933', kind: 'headset', vendorId: LOGITECH, productIds: [0x0a5c, 0x0a89, 0x0a5b, 0x0a87, 0x0ab5, 0x0afe, 0x0b1f],
     channel: LOGITECH_CHANNEL, steps: [hidppVoltageStep([0x08, 0x0a], G633_CURVE)],
   },
@@ -196,7 +329,9 @@ const DEVICES = [
   },
   {
     name: 'Logitech G535', kind: 'headset', vendorId: LOGITECH, productIds: [0x0ac4],
-    channel: { usagePage: 0x0c, usage: 0x01, interface: 3 }, steps: [hidppVoltageStep([0x05, 0x0d], G535_CURVE)],
+    // HeadsetControl writes to the media-key collection, which Windows refused on one PC (issue
+    // #143, "Cannot write to hid device"); the HID++ long collection comes first.
+    channel: [LOGITECH_CHANNEL, { usagePage: 0x0c, usage: 0x01, interface: 3 }], steps: [hidppVoltageStep([0x05, 0x0d], G535_CURVE)],
   },
   {
     name: 'Logitech G PRO', kind: 'headset', vendorId: LOGITECH, productIds: [0x0aa7, 0x0aaa, 0x0aba, 0x0afb, 0x0afc],

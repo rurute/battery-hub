@@ -1,5 +1,5 @@
 // The issue bot (see .github/workflows/triage.yml). On every new device report it:
-//   - labels it: good report (the scan caught something and the real level is given), no data,
+//   - labels it: good report (the scan's bytes and the real level are given), no data,
 //     or old version
 //   - closes it if the same hardware was already reported, pointing to that report
 //   - keeps the "Most requested devices" issue up to date, so the most wanted devices are clear
@@ -13,10 +13,14 @@ const LABELS = {
   old: { name: 'old version', color: 'fbca04', description: 'Sent from an older Battery Hub' },
   duplicate: { name: 'duplicate', color: 'cfd3d7', description: 'This device was already reported' },
   cant: { name: "can't support", color: 'b60205', description: "The device doesn't share its battery level, so it can't be read" },
+  works: { name: 'works', color: '0e8a16', description: 'Someone confirmed Battery Hub reads this device' },
   board: { name: BOARD_LABEL, color: '5319e7', description: 'The list of requested devices' },
 };
-const NO_ANSWER = /^_?no response_?$|^(unknown|n\/a|none|-|don'?t know|no se|不知道)$/i;
+const NO_ANSWER = /^_?no response_?$|^(unknown|n\/a|none|-|\?+|no se|不知道)$/i;
+// 'don't know' typed any way: dont't, don`t, idk, not sure.
+const NO_IDEA = (t) => /^(i?don?t*know|idk|notsure|nose)$/.test(t.toLowerCase().replace(/[^a-z]/g, ''));
 
+const isWorksReport = (issue) => /^\[Works\]/i.test(issue.title || '') || (issue.labels || []).some((l) => (l.name || l) === 'works');
 const isDeviceReport = (issue) => /^\[Device\]/i.test(issue.title || '') || (issue.labels || []).some((l) => (l.name || l) === 'device-support');
 
 // The section under a "### Heading" of an issue form.
@@ -39,12 +43,15 @@ function parseReport(issue) {
   const actual = section(body, 'Actual battery level during the scan');
   const version = (section(body, 'Battery Hub version').match(/\d+\.\d+\.\d+/) || [])[0] || null;
   const captured = /^Scan \d+: \d+ messages?$/m.test(scan) || /^Feature reports:/m.test(scan) || /report \d+, seen \d+x/.test(scan);
+  // The bytes a battery is decoded from. Before 2.0.5 reports often held only message counts.
+  const bytes = /report \d+, seen \d+x: [0-9a-fx]{2,}/i.test(scan);
   return {
     hardware: hardwareOf(section(body, 'Vendor / Product ID') || body),
     name: section(body, 'Device').split('\n')[0].trim() || String(issue.title || '').replace(/^\[Device\]\s*/i, ''),
     version,
     captured,
-    hasLevel: !!actual && !NO_ANSWER.test(actual.trim()),
+    bytes,
+    hasLevel: !!actual && !NO_ANSWER.test(actual.trim()) && !NO_IDEA(actual),
   };
 }
 
@@ -77,7 +84,7 @@ function decide(report, others, latest) {
     labels.push(LABELS.old.name, 'needs info');
     return { labels, close: false, comment: `Thanks! This was sent from Battery Hub ${report.version}, and the latest is ${latest.replace(/^v/, '')}. Please update (Settings → Check for updates), run the scan again and post the new result here: it may already be fixed.` };
   }
-  if (report.captured && report.hasLevel) labels.push(LABELS.good.name);
+  if (report.bytes && report.hasLevel) labels.push(LABELS.good.name);
   else if (!report.captured) {
     labels.push(LABELS.noData.name, 'needs info');
     return { labels, close: false, comment: "Thanks! The scan didn't catch anything from this device yet. Please make sure it's on and awake, turn it off and on while the scan runs, and post the new result. If it also has Bluetooth, try connecting that way: Battery Hub reads Bluetooth batteries. If you know an app that shows its battery, tell me which." };
@@ -89,7 +96,7 @@ function decide(report, others, latest) {
 // asked counts once, and so does every 👍, but each device links only to its main report: closed
 // copies just send people there. Devices with no open report, or marked can't support, go in their
 // own section below.
-function boardBody(reports) {
+function boardBody(reports, works = []) {
   const rows = new Map();
   for (const r of reports) {
     if (!r.hardware) continue;
@@ -98,6 +105,7 @@ function boardBody(reports) {
     if (r.author) row.people.add(r.author);
     row.votes += r.votes || 0;
     row.good = row.good || r.good;
+    row.works = row.works || r.works;
     rows.set(r.hardware, row);
   }
   for (const row of rows.values()) {
@@ -110,9 +118,20 @@ function boardBody(reports) {
   const score = (r) => r.people.size + r.votes;
   const byScore = (x, y) => score(y) - score(x) || x.main.number - y.main.number;
   const line = (r) => `| ${score(r)} | ${String(r.main.name || '').replace(/\|/g, '/').slice(0, 60)} | \`${r.hardware}\` | #${r.main.number} |${r.good ? ' ✅' : ''} |`;
-  const open = [...rows.values()].filter((r) => r.open).sort(byScore);
-  const closed = [...rows.values()].filter((r) => !r.open).sort(byScore);
+  // A device someone confirmed works is listed under Works with only.
+  const open = [...rows.values()].filter((r) => r.open && !r.works).sort(byScore);
+  const closed = [...rows.values()].filter((r) => !r.open && !r.works).sort(byScore);
   const head = ['| Requests | Device | ID | Report | |', '|---:|---|---|---|---|'];
+  // Works with: one row per hardware a person confirmed, with how many people did.
+  const confirmed = new Map();
+  for (const w of [...works].sort((x, y) => x.number - y.number)) {
+    if (!w.hardware) continue;
+    const row = confirmed.get(w.hardware) || { hardware: w.hardware, name: w.name, number: w.number, people: new Set() };
+    row.people.add(w.author || w.number);
+    confirmed.set(w.hardware, row);
+  }
+  const worksRows = [...confirmed.values()].sort((x, y) => y.people.size - x.people.size || x.number - y.number)
+    .map((r) => `| ${r.people.size} | ${String(r.name || '').replace(/\|/g, '/').slice(0, 60)} | \`${r.hardware}\` | #${r.number} |`);
   return [
     'Every device people have asked Battery Hub to support, most requested first. Updated by a bot on each new report.',
     '',
@@ -120,6 +139,14 @@ function boardBody(reports) {
     '',
     ...head,
     ...open.map(line),
+    '',
+    `<details><summary>Works with: devices people confirmed Battery Hub reads (${worksRows.length})</summary>`,
+    '',
+    '| People | Device | ID | Report |',
+    '|---:|---|---|---|',
+    ...worksRows,
+    '',
+    '</details>',
     '',
     `<details><summary>Can't be read: devices that were looked at and closed, or that don't share their battery level (${closed.length})</summary>`,
     '',
@@ -130,10 +157,15 @@ function boardBody(reports) {
   ].join('\n');
 }
 
-async function allDeviceIssues(github, owner, repo) {
+async function allIssues(github, owner, repo) {
   const issues = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'all', per_page: 100 });
-  return issues.filter((i) => !i.pull_request && isDeviceReport(i));
+  return issues.filter((i) => !i.pull_request);
 }
+const allDeviceIssues = async (...a) => (await allIssues(...a)).filter(isDeviceReport);
+// "It works" reports a person sent, except ones closed as not planned (a mistake or a fake).
+const allWorks = async (...a) => (await allIssues(...a))
+  .filter((i) => isWorksReport(i) && i.state_reason !== 'not_planned')
+  .map((i) => ({ ...parseReport(i), number: i.number, author: i.user && i.user.login }));
 
 async function ensureLabels(github, owner, repo) {
   for (const l of Object.values(LABELS)) {
@@ -151,8 +183,9 @@ async function updateBoard(github, owner, repo, issues) {
     good: (i.labels || []).some((l) => l.name === LABELS.good.name),
     duplicate: (i.labels || []).some((l) => l.name === LABELS.duplicate.name) || i.state_reason === 'duplicate',
     cantSupport: (i.labels || []).some((l) => l.name === LABELS.cant.name),
+    works: (i.labels || []).some((l) => l.name === LABELS.works.name),
   }));
-  const body = boardBody(reports);
+  const body = boardBody(reports, await allWorks(github, owner, repo));
   const boards = await github.paginate(github.rest.issues.listForRepo, { owner, repo, labels: BOARD_LABEL, state: 'all', per_page: 100 });
   const board = boards.find((i) => i.title === BOARD_TITLE);
   if (board) {
@@ -187,4 +220,4 @@ async function run({ github, context }) {
   await updateBoard(github, owner, repo, issues);
 }
 
-module.exports = { run, parseReport, hardwareOf, decide, boardBody, isOlder, isDeviceReport };
+module.exports = { run, parseReport, hardwareOf, decide, boardBody, isOlder, isDeviceReport, isWorksReport };
