@@ -200,13 +200,14 @@ git commit -m "feat(inzone): left, right and case on the detail screen (#3)"
 
 ```bash
 git push -u origin feat/inzone-buds
+SHA=$(git rev-parse HEAD); [ "$(git rev-parse origin/feat/inzone-buds)" = "$SHA" ]; echo pushed=$?
 gh workflow run build.yml -R rurute/battery-hub --ref feat/inzone-buds
-gh run list -R rurute/battery-hub -w build.yml -L1   # take the run id
+gh run list -R rurute/battery-hub -w build.yml --branch feat/inzone-buds --commit "$SHA" -L1 --json databaseId,headBranch,headSha
 gh run watch <run-id> -R rurute/battery-hub --exit-status
 gh run download <run-id> -R rurute/battery-hub -D dist/ci/battery-hub-feat-inzone-buds-<short sha>
 ```
 
-Expected: the run succeeds and `Battery-Hub-Installer-2.0.5.exe` is downloaded.
+Expected: `pushed=0`; the listed run has `headBranch` `feat/inzone-buds` and `headSha` equal to `$SHA` (if the list is empty, the dispatched run has not registered yet: list again, never fall back to an unfiltered list); the run succeeds and `Battery-Hub-Installer-2.0.5.exe` is downloaded from that run id.
 
 - [ ] **Step 2: HUMAN runs the spec's hardware checks 1–6** with the installer (INZONE Hub running for check 5).
 
