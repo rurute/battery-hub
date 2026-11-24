@@ -212,3 +212,20 @@ Expected: `pushed=0`; the listed run has `headBranch` `feat/inzone-buds` and `he
 - [ ] **Step 2: HUMAN runs the spec's hardware checks 1–6** with the installer (INZONE Hub running for check 5).
 
 Expected: all six hold. If check 1 fails because nothing is read on one handle, stop: the spec's handle decision says to revise the spec (separate write handle) and get re-approval before changing code.
+
+## レビューの記録
+
+Codex（`codex exec`、read-only、MCP サーバなし）による独立レビュー。run directory は `.ai/v01-run/`（git の追跡外）。要求源は承認済みの spec（`9476ee6`）。
+
+| 回 | run directory | 対象 HEAD | 比較元 | verdict | 採用 |
+|---|---|---|---|---|---|
+| 1 | `20261124-233530-plan` | `2931ec1` | なし（新規） | CHANGES_REQUESTED（D 1 件） | 採用（HEAD 一致、exit 0。stderr の MCP の語 2 行は、レビュアが表示した spec 本文で、起動ログではない） |
+| 2 | `20261124-233705-plan` | `8b60595` | `2931ec1` | APPROVE | 採用（HEAD 一致、exit 0） |
+
+直した D:
+
+- 1-F1: Task 4 が最新の build.yml の run を、branch と commit を確かめずに選んでいた → push の到達を確かめ、`--branch` と `--commit` で絞った run の `headBranch` / `headSha` を確かめてから、その run id で取得するように改めた。
+
+S / H: なし。
+
+残る限界: レビュアは実装・テストの実行・ビルド・実機での確認をしていない。1 つのハンドルでの読み書きと INZONE Hub との共存は、実機で確かめるまでわからない。APPROVE は、文書が spec と整合しているという判定で、実装済み・テスト成功・HUMAN の承認のどれでもない。
