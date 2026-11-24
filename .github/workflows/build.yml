@@ -1,0 +1,53 @@
+name: Build (manual)
+
+# Builds the Windows installer for trying out a branch, on the same Windows runner as release.yml,
+# and keeps it as a workflow artifact. Publishes nothing: no release, no tag, no token.
+#
+#   gh workflow run build.yml -R rurute/battery-hub --ref <branch>
+#   gh run watch -R rurute/battery-hub
+#   gh run download -R rurute/battery-hub -D dist-ci
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the electron-builder installer
+        run: npm run dist -- --publish never
+
+      - name: Build the branded installer
+        run: npm run installer
+
+      # Branch names like feat/x have a slash, which an artifact name can't.
+      - name: Name the artifact
+        shell: bash
+        run: |
+          branch="${GITHUB_REF_NAME//\//-}"
+          echo "ARTIFACT_NAME=battery-hub-${branch}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            dist/Battery-Hub-Installer-*.exe
+            dist/Battery-Hub-Update-*.exe
+          if-no-files-found: error
+          retention-days: 14
