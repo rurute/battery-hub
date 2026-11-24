@@ -31,7 +31,7 @@ Windows に Node.js を入れず、WSL からの操作だけで、自分の変�
 ```sh
 gh workflow run build.yml -R rurute/battery-hub --ref <branch>
 gh run watch -R rurute/battery-hub
-gh run download -R rurute/battery-hub -D dist-ci
+gh run download -R rurute/battery-hub -D dist/ci
 ```
 
 ## 運用で必要なこと

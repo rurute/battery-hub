@@ -5,7 +5,7 @@ name: Build (manual)
 #
 #   gh workflow run build.yml -R rurute/battery-hub --ref <branch>
 #   gh run watch -R rurute/battery-hub
-#   gh run download -R rurute/battery-hub -D dist-ci
+#   gh run download -R rurute/battery-hub -D dist/ci
 
 on:
   workflow_dispatch:
