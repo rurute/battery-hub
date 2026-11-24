@@ -4,6 +4,7 @@
 // Long report: 0x11 <device> <feature index> <function << 4 | software id> <params...>
 // Windows splits short and long reports into separate collections, so everything here is long.
 const { exchange, pad, fromVoltage } = require('./exchange');
+const { serialize } = require('./lightspeed');
 
 const LOGITECH = 0x046d;
 const LONG = 0x11;
@@ -25,7 +26,7 @@ const BATTERY_VOLTAGE = 0x1001;
 const UNIFIED_LEVELS = [[8, 100], [4, 50], [2, 20], [1, 5]]; // full, good, low, critical
 const CELL_CURVE = [[4190, 100], [4060, 90], [3980, 80], [3920, 70], [3870, 60], [3830, 50], [3790, 40], [3760, 30], [3730, 20], [3690, 10], [3500, 0]];
 
-const routes = new Map(); // channel path -> { device, feature, index }
+const routes = new Map(); // channel path (plus wireless PID for a device on a receiver) -> { device, index, entry }
 
 function channelOf(logicalDevice) {
   const on = (page, usage) => logicalDevice.channels.find((c) => c.usagePage === page && c.usage === usage);
@@ -102,9 +103,14 @@ const FEATURES = [
   { feature: BATTERY_VOLTAGE, fn: 0, parse: parseVoltage },
 ];
 
+// A device split off its receiver (see lightspeed.js) lives in one known slot.
+function slotsOf(logicalDevice) {
+  if (logicalDevice.receiver) return [logicalDevice.receiver.slot];
+  return /receiver/i.test(logicalDevice.product) ? RECEIVER_SLOTS : [DIRECT, ...RECEIVER_SLOTS];
+}
+
 async function findRoute(channel, logicalDevice) {
-  const receiver = /receiver/i.test(logicalDevice.product);
-  const slots = receiver ? RECEIVER_SLOTS : [DIRECT, ...RECEIVER_SLOTS];
+  const slots = slotsOf(logicalDevice);
   let failure = null;
   for (const device of slots) {
     for (const entry of FEATURES) {
@@ -133,22 +139,33 @@ async function readRoute(channel, route) {
 async function readBattery(logicalDevice) {
   const channel = channelOf(logicalDevice);
   if (!channel) throw new Error('no command channel');
-  const known = routes.get(channel.path);
+  // One exchange at a time on a receiver: listing its devices talks to it too.
+  return serialize(channel.path, () => readOn(channel, logicalDevice));
+}
+
+async function readOn(channel, logicalDevice) {
+  const { receiver } = logicalDevice;
+  const key = receiver ? `${channel.path}|${receiver.wpid}` : channel.path;
+  let known = routes.get(key);
+  if (known && receiver && known.device !== receiver.slot) {
+    routes.delete(key); // paired again into another slot: that slot may hold another device now
+    known = null;
+  }
   if (known) {
     try {
       return await readRoute(channel, known);
     } catch (e) {
-      routes.delete(channel.path); // a device can move slot or wake with other firmware
+      routes.delete(key); // a device can move slot or wake with other firmware
       if (!isOutcome(e)) throw e;
       // Look again straight away, so a device that went off shows as off on this read.
     }
   }
   const route = await findRoute(channel, logicalDevice);
-  routes.set(channel.path, route);
+  routes.set(key, route);
   try {
     return await readRoute(channel, route);
   } catch (e) {
-    routes.delete(channel.path);
+    routes.delete(key);
     throw e;
   }
 }

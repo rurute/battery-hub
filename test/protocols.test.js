@@ -352,6 +352,74 @@ test('Logitech: a device that stops answering reads as off on the same poll, an 
   }
 });
 
+// The G913 TKL (slot 1, 0x1001 at index 7) and G502 X (slot 2, 0x1004 at index 6) on one receiver,
+// with the readings recorded in fork Issue #2: 0x102d = 4141 mV, and 0x51 = 81%.
+function twoDeviceReceiver(calls, { asleep = [] } = {}) {
+  const features = { 1: { 0x1001: 7 }, 2: { 0x1004: 6 } };
+  const readings = { 1: [0x10, 0x2d, 0x00], 2: [0x51, 0x08, 0x00, 0x00] };
+  return async (channel, request, accept) => {
+    const [, device, index, fnSw] = request;
+    calls.push({ device, index });
+    if (!features[device] || asleep.includes(device)) throw new Error('timeout waiting for battery response');
+    if (index === 0) {
+      const feature = (request[4] << 8) | request[5];
+      return accept(pad([0x11, device, 0, fnSw, features[device][feature] || 0], 20));
+    }
+    return accept(pad([0x11, device, index, fnSw, ...readings[device]], 20));
+  };
+}
+const RECEIVER_CHANNELS = [{ path: 'r', usagePage: 0xff00, usage: 0x02 }];
+const childOnSlot = (slot, wpid) => ({ product: 'G502 X LS', vendorId: 0x046d, channels: RECEIVER_CHANNELS, receiver: { slot, wpid, kind: 2 } });
+
+async function withExchange(fake, fn) {
+  const exchange = require('../src/main/hid/drivers/exchange');
+  const original = exchange.exchange;
+  delete require.cache[require.resolve('../src/main/hid/drivers/hidpp')];
+  exchange.exchange = fake;
+  try {
+    await fn(require('../src/main/hid/drivers/hidpp'));
+  } finally {
+    exchange.exchange = original;
+    delete require.cache[require.resolve('../src/main/hid/drivers/hidpp')];
+  }
+}
+
+test('Logitech: each child of a receiver reads its own slot', async () => {
+  const calls = [];
+  await withExchange(twoDeviceReceiver(calls), async (hidpp2) => {
+    const mouse = childOnSlot(2, 0x409f);
+    const keyboard = { ...childOnSlot(1, 0x408e), product: 'G913 TKL' };
+    assert.equal((await hidpp2.readBattery(mouse)).capacity, 81);
+    assert.ok(!calls.some((c) => c.device === 1));
+    assert.equal((await hidpp2.readBattery(keyboard)).voltageMv, 4141);
+    assert.equal((await hidpp2.readBattery(mouse)).capacity, 81);
+    assert.equal((await hidpp2.readBattery(keyboard)).voltageMv, 4141);
+  });
+});
+
+test('Logitech: a child whose slot moved looks for its battery again', async () => {
+  const calls = [];
+  await withExchange(twoDeviceReceiver(calls), async (hidpp2) => {
+    await hidpp2.readBattery(childOnSlot(2, 0x408e));
+    calls.length = 0;
+    await hidpp2.readBattery(childOnSlot(1, 0x408e));
+    assert.ok(calls.some((c) => c.device === 1 && c.index === 0));
+  });
+});
+
+test('Logitech: the receiver itself still reads its first device', async () => {
+  await withExchange(twoDeviceReceiver([]), async (hidpp2) => {
+    const receiver = { product: 'USB Receiver', vendorId: 0x046d, channels: RECEIVER_CHANNELS };
+    assert.equal((await hidpp2.readBattery(receiver)).voltageMv, 4141);
+  });
+});
+
+test('Logitech: a child that is asleep reads as not answering', async () => {
+  await withExchange(twoDeviceReceiver([], { asleep: [2] }), async (hidpp2) => {
+    await assert.rejects(hidpp2.readBattery(childOnSlot(2, 0x409f)), /^Error: device is not answering$/);
+  });
+});
+
 test('DualShock 4 adapter with no controller on it reads as off, not as a low battery', () => {
   const usb = new Array(64).fill(0);
   usb[0] = 0x01;
