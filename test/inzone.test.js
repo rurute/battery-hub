@@ -59,3 +59,100 @@ test('inzone: TIDs count up from 0x4000 and wrap from 0xFFFF to 1', () => {
   assert.equal(inzone.nextTid(), 0xffff);
   assert.equal(inzone.nextTid(), 1);
 });
+
+// ---------- reading ----------
+const { detectDriver } = require('../src/main/hid/drivers');
+const exchange = require('../src/main/hid/drivers/exchange');
+
+const BUDS = { id: 'b', vendorId: 0x054c, productId: 0x0ec2, channels: [{ path: 'p3', usagePage: 0xff04, usage: 0x0001 }, { path: 'p1', usagePage: 0xff13, usage: 0x0001 }] };
+const replyFor = (tid, { left = 0x63, right = 0x63, kase = 0x60 } = {}) => {
+  const f = REPLY.slice();
+  f[11] = tid & 0xff; f[12] = (tid >> 8) & 0xff; f[14] = left; f[16] = right; f[18] = kase;
+  return withSum(f);
+};
+
+// Each call takes the next script: a list of frames fed to accept, 'timeout', or an Error to throw.
+async function withScript(scripts, fn) {
+  const calls = [];
+  const original = exchange.exchange;
+  exchange.exchange = async (channel, request, accept, timeoutMs) => {
+    calls.push({ path: channel.path, request, timeoutMs });
+    const script = scripts[calls.length - 1];
+    if (script instanceof Error) throw script;
+    for (const f of Array.isArray(script) ? script : []) {
+      const result = accept(f);
+      if (result !== null && result !== undefined) return result;
+    }
+    throw new Error('timeout waiting for battery response');
+  };
+  try {
+    inzone._resetTid(1);
+    await fn(calls);
+  } finally {
+    exchange.exchange = original;
+    inzone._resetTid();
+  }
+}
+
+test('inzone: matches the dongle by id and command collection only', () => {
+  assert.equal(inzone.matches(BUDS), true);
+  assert.equal(inzone.matches({ ...BUDS, channels: [BUDS.channels[1]] }), false);
+  assert.equal(inzone.matches({ ...BUDS, productId: 0x0ce6 }), false);
+});
+
+test('inzone: the driver list picks inzone for the buds and playstation for a DualSense', () => {
+  assert.equal(detectDriver(BUDS).id, 'inzone');
+  assert.equal(detectDriver({ vendorId: 0x054c, productId: 0x0ce6, channels: [{ path: 'd', usagePage: 0x0001, usage: 0x0005 }] }).id, 'playstation');
+});
+
+test('inzone: reads the captured reply after skipping a reply to INZONE Hub', async () => {
+  const hub = replyFor(2);
+  await withScript([[hub, REPLY]], async (calls) => {
+    assert.deepEqual(await inzone.readBattery(BUDS), { capacity: 99, charging: null, parts: { left: 99, right: 99, case: 96 } });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, 'p3');
+    assert.equal(calls[0].timeoutMs, 1000);
+  });
+});
+
+test('inzone: the card shows the lower earbud', async () => {
+  await withScript([[replyFor(1, { right: 0x50 })]], async () => {
+    assert.equal((await inzone.readBattery(BUDS)).capacity, 80);
+  });
+});
+
+test('inzone: one earbud reported is enough', async () => {
+  await withScript([[replyFor(1, { right: 0xff })]], async () => {
+    const reading = await inzone.readBattery(BUDS);
+    assert.equal(reading.capacity, 99);
+    assert.equal(reading.parts.right, null);
+  });
+});
+
+test('inzone: no earbud reported means the headset is off', async () => {
+  await withScript([[replyFor(1, { left: 0xff, right: 0xff })]], async () => {
+    await assert.rejects(inzone.readBattery(BUDS), /^Error: headset is off$/);
+  });
+});
+
+test('inzone: a missed reply is asked again with a new TID', async () => {
+  await withScript(['timeout', [replyFor(2)]], async (calls) => {
+    assert.equal((await inzone.readBattery(BUDS)).capacity, 99);
+    assert.equal(calls.length, 2);
+    assert.notDeepEqual(calls[0].request.slice(11, 13), calls[1].request.slice(11, 13));
+  });
+});
+
+test('inzone: two missed replies mean the headset is off', async () => {
+  await withScript(['timeout', 'timeout'], async (calls) => {
+    await assert.rejects(inzone.readBattery(BUDS), /^Error: headset is off$/);
+    assert.equal(calls.length, 2);
+  });
+});
+
+test('inzone: a failed write is reported as it is', async () => {
+  await withScript([new Error('could not write')], async (calls) => {
+    await assert.rejects(inzone.readBattery(BUDS), /could not write/);
+    assert.equal(calls.length, 1);
+  });
+});

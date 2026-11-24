@@ -13,7 +13,9 @@
 // INZONE Hub talks on the same collection, so a reply only counts when its event, type, TID and
 // checksum all match. A Hub battery reply that happens to carry our TID can't be told apart, but it
 // holds the same earbuds' levels.
-const { pad } = require('./exchange');
+const exchange = require('./exchange');
+
+const { pad } = exchange;
 
 const REPORT_ID = 0x02;
 const REQUEST_HEAD = [REPORT_ID, 0x0c, 0x01, 0x00, 0xfc, 0x08, 0x96, 0xc3, 0x41, 0x04, 0x01];
@@ -22,6 +24,11 @@ const BATTERY_EVENT = 0x04;
 const GET_ANSWER = 0x10;
 const REPLY_LENGTH = 20;
 const FIRST_TID = 0x4000; // away from the small numbers INZONE Hub uses
+const SONY = 0x054c;
+const DONGLE = 0x0ec2;
+const REPLY_MS = 1000;
+const ATTEMPTS = 2; // a reply can go missing just after the earbuds go into the case
+const TIMEOUT = /^timeout/;
 
 const lowByte = (bytes) => bytes.reduce((a, b) => a + b, 0) & 0xff;
 
@@ -52,4 +59,31 @@ function _resetTid(value = FIRST_TID) {
   tidNext = value;
 }
 
-module.exports = { request, parseReply, nextTid, _resetTid };
+const commandChannel = (logicalDevice) => logicalDevice.channels.find((c) => c.usagePage === 0xff04 && c.usage === 0x0001);
+
+function matches(logicalDevice) {
+  return logicalDevice.vendorId === SONY && logicalDevice.productId === DONGLE && !!commandChannel(logicalDevice);
+}
+
+// The card shows the lower earbud. With neither earbud reporting, or no reply at all (the case is
+// closed), the earbuds are treated as switched off, as the poller does for other headsets.
+async function readBattery(logicalDevice) {
+  const channel = commandChannel(logicalDevice);
+  if (!channel) throw new Error('no command channel');
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    const tid = nextTid();
+    let parts;
+    try {
+      parts = await exchange.exchange(channel, request(tid), (f) => parseReply(f, tid), REPLY_MS);
+    } catch (e) {
+      if (TIMEOUT.test(e.message)) continue;
+      throw e;
+    }
+    const earbuds = [parts.left, parts.right].filter((v) => v !== null);
+    if (!earbuds.length) throw new Error('headset is off');
+    return { capacity: Math.min(...earbuds), charging: null, parts };
+  }
+  throw new Error('headset is off');
+}
+
+module.exports = { id: 'inzone', matches, readBattery, request, parseReply, nextTid, _resetTid };
