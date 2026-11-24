@@ -169,3 +169,15 @@ test('inzone: a jump to the other earbud is never left to be guessed as charging
     assert.strictEqual(after.charging, false);
   });
 });
+
+// The dongle calls itself "Hid Interface", so the icon comes from the driver, as for MCHOSE and Audeze.
+test('inzone: the buds get the headset icon whatever the dongle calls itself', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const context = {};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'icons.js'), 'utf8'), context);
+  assert.equal(vm.runInContext("iconFor('Hid Interface', 'inzone')", context), 'headset');
+  assert.equal(vm.runInContext("iconFor('Hid Interface', null)", context), 'plug');
+  assert.equal(vm.runInContext("iconFor('Wireless Controller', 'playstation')", context), 'controller');
+});
