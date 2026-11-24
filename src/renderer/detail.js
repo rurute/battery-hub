@@ -234,6 +234,12 @@ function renderDetail() {
   setText('detail-updated', timeAgo(dev.lastReadingAt));
   document.getElementById('detail-voltage-row').hidden = !voltage;
   if (voltage) setText('detail-voltage', `${(voltage / 1000).toFixed(2)} V`);
+  // Earbuds report each earbud and the case; the card shows only the lower earbud.
+  const parts = dev.lastReading && dev.lastReading.parts;
+  for (const [id, key] of [['detail-left-bud', 'left'], ['detail-right-bud', 'right'], ['detail-case', 'case']]) {
+    document.getElementById(`${id}-row`).hidden = !parts;
+    if (parts) setText(id, parts[key] == null ? '—' : `${parts[key]}%`);
+  }
 
   renderAlert(dev);
   offerReadReport(dev);

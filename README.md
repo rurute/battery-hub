@@ -96,6 +96,7 @@ Battery Hub reads these directly. Anything else can usually be added with **Set 
 | Bluetooth | Any paired device that reports its battery to Windows |
 | Xbox | Wireless controllers |
 | PlayStation | DualSense, DualSense Edge, DualShock 4 (USB and Bluetooth) |
+| Sony | INZONE Buds (USB dongle) |
 | Logitech | Mice and keyboards using HID++ 2.0 (Bolt, Unifying, Lightspeed); G PRO, G533, G535, G633, G733, G933, G935 headsets |
 | Razer | 81 wireless mice and keyboards |
 | SteelSeries | Arctis 1, 7, 7+, 9, Nova 3P, Nova 5, Nova 7, Nova Pro Wireless headsets; Aerox, Prime and Rival 3 Wireless mice |
