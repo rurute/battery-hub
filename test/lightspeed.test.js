@@ -25,6 +25,9 @@ test('device name: length then ASCII', () => {
   const name = [0x40, 8, ...Buffer.from('G913 TKL')];
   assert.equal(lightspeed.parseName(name), 'G913 TKL');
   assert.equal(lightspeed.parseName([0x41, 0]), null);
+  // what the receiver actually answered for slots 1 and 2 (after 11 ff 83 b5)
+  assert.equal(lightspeed.parseName(hex('40 08 47 39 31 33 20 54 4b 4c 00 00 00 00 00 00')), 'G913 TKL');
+  assert.equal(lightspeed.parseName(hex('41 09 47 35 30 32 20 58 20 4c 53 00 00 00 00 00')), 'G502 X LS');
 });
 
 test('a child keeps its id across slots and takes the receiver short name', () => {
