@@ -222,3 +222,25 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
 - [ ] **Step 5: エラーの返答が届く collection を確かめる**（spec の「どちらに届いたかは実機で確かめる」）。Issue #2 の調査と同じく、WSL から Windows の PowerShell で HID API を呼ぶ。Battery Hub は終了しておく。レシーバーの COL01（`0xFF00/0x0001`）に空のスロット 3 の pairing info の問い合わせ `10 ff 83 b5 22 00 00` を書き、COL01 と COL02（`0xFF00/0x0002`）をそれぞれ 1 秒ずつ読み、`10 ff 8f 83 b5 ..` がどちらに届いたかを記録する。あわせて、レシーバーの HID のシリアル番号が 12 桁の 16 進の形かを記録する。どちらの結果でも Task 3 の `realAsk`（両方の collection を読む）はそのままでよい。結果が spec の前提（短い側に書けば返答が受け取れる）と食い違えば、実装を進めずに HUMAN に報告する
 
 - [ ] **Step 6: 報告する** — Step 4・5 の結果を HUMAN に報告する。Issue #2 にコメントするかは HUMAN に聞く
+
+## レビューの記録
+
+### 1 回目（Codex、run `20261124-184525-plan`）
+
+- 対象 HEAD: `0bdec43`、比較元: なし（新規）、要求源: spec（承認時の HEAD `77c3f1f`）、verdict: CHANGES_REQUESTED、採用ゲート 0・A〜D を満たし採用、MCP の起動ログ: clean
+- 直した D:
+  - F1: Task 5 の `pollOnce` の呼び方が実際の引数と違っていた → `pollOnce(() => {}, { force: true })` にした
+  - F2: Task 5 で、非表示の状態と履歴が機器ごとに残ることを確かめていなかった → 2 枚で別々の値にし、確かめる項目に足した
+  - F3: live の子 2 台がまとめられないことを確かめていなかった → Task 1 に足した
+  - F4: Task 2〜5 の commit に `git add` が無かった → 足した
+  - F5: エラーの返答が届く collection を実機で確かめる手順が無かった → Task 5 Step 5 を足した
+
+### 2 回目（Codex、run `20261124-184833-plan`）
+
+- 対象 HEAD: `dcc35ac`、比較元: `0bdec43`、verdict: APPROVE、採用ゲート 0・A〜D を満たし採用、MCP の起動ログ: clean
+- 前回の F1〜F5 はすべて addressed。新しい指摘なし。S / H なし
+
+### 残る限界
+
+- 実機での動き（エラーの返答が届く collection、レシーバーのシリアル番号の形、名前の返答の生のバイト列、G HUB との比較）は確かめていない
+- APPROVE は、計画が承認済みの spec と整合しているというレビュアの判定である。実装済み・テスト成功・HUMAN の承認のどれでもない
