@@ -42,4 +42,78 @@ function childOf(parent, { slot, wpid, kind, name }) {
   };
 }
 
-module.exports = { RECEIVER_PIDS, isTarget, parsePairing, parseName, childOf };
+// One exchange at a time per receiver: a listing and a battery read on the same receiver would
+// each throw away the other's replies.
+const locks = new Map(); // key -> tail of the chain
+function serialize(key, fn) {
+  const run = (locks.get(key) || Promise.resolve()).then(fn, fn);
+  const tail = run.catch(() => {});
+  locks.set(key, tail);
+  tail.then(() => { if (locks.get(key) === tail) locks.delete(key); });
+  return run;
+}
+
+const SLOTS = [1, 2, 3, 4, 5, 6];
+const PAIRING = 0x20;
+const NAME = 0x40;
+const REGISTER_ERROR = /^register error/;
+const TIMEOUT = /^timeout/;
+
+// ask(sub) -> params of register 0xB5 at that sub-address. "answered" says the receiver replied for
+// at least one slot; then a slot that only timed out is taken to be empty, since the receiver itself
+// answers for paired devices even while they sleep.
+async function scanReceiver(ask) {
+  let answered = false;
+  const devices = [];
+  for (const slot of SLOTS) {
+    let pairing;
+    try {
+      pairing = parsePairing(await ask(PAIRING + slot - 1));
+      answered = true;
+    } catch (e) {
+      if (REGISTER_ERROR.test(e.message)) answered = true;
+      continue; // empty, timed out, or the receiver could not be reached
+    }
+    if (!pairing) continue;
+    let name = null;
+    try { name = parseName(await ask(NAME + slot - 1)); } catch (_) {}
+    devices.push({ slot, ...pairing, name });
+  }
+  return { answered, devices };
+}
+
+const longPath = (device) => device.channels.find((c) => c.usagePage === 0xff00 && c.usage === 0x02).path;
+
+const cache = new Map(); // receiver id -> devices found on it, while it stays plugged in
+
+function notWired() {
+  return () => Promise.reject(new Error('not wired'));
+}
+
+async function expandReceivers(devices, { fresh = false, ask = notWired } = {}) {
+  for (const id of cache.keys()) {
+    if (!devices.some((d) => d.id === id)) cache.delete(id);
+  }
+  const out = [];
+  for (const device of devices) {
+    if (!isTarget(device)) { out.push(device); continue; }
+    if (fresh || !cache.has(device.id)) {
+      const scan = await serialize(longPath(device), () => scanReceiver(ask(device))).catch(() => ({ answered: false }));
+      if (scan.answered && scan.devices.length) cache.set(device.id, scan.devices);
+      else if (scan.answered) cache.delete(device.id);
+    }
+    const found = cache.get(device.id);
+    if (!found) { out.push(device); continue; }
+    out.push({ ...device, expanded: true }, ...found.map((f) => childOf(device, f)));
+  }
+  return out;
+}
+
+function _reset() {
+  cache.clear();
+  locks.clear();
+}
+
+module.exports = {
+  RECEIVER_PIDS, isTarget, parsePairing, parseName, childOf, serialize, scanReceiver, expandReceivers, _reset,
+};
