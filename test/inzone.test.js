@@ -108,7 +108,7 @@ test('inzone: the driver list picks inzone for the buds and playstation for a Du
 test('inzone: reads the captured reply after skipping a reply to INZONE Hub', async () => {
   const hub = replyFor(2);
   await withScript([[hub, REPLY]], async (calls) => {
-    assert.deepEqual(await inzone.readBattery(BUDS), { capacity: 99, charging: null, parts: { left: 99, right: 99, case: 96 } });
+    assert.deepEqual(await inzone.readBattery(BUDS), { capacity: 99, charging: false, parts: { left: 99, right: 99, case: 96 } });
     assert.equal(calls.length, 1);
     assert.equal(calls[0].path, 'p3');
     assert.equal(calls[0].timeoutMs, 1000);
@@ -154,5 +154,18 @@ test('inzone: a failed write is reported as it is', async () => {
   await withScript([new Error('could not write')], async (calls) => {
     await assert.rejects(inzone.readBattery(BUDS), /could not write/);
     assert.equal(calls.length, 1);
+  });
+});
+
+// The poller guesses charging from a rising level when a reading says null. The card follows the
+// lower earbud, so putting that earbud in the case makes the level jump to the other one, which must
+// not read as charging.
+test('inzone: a jump to the other earbud is never left to be guessed as charging', async () => {
+  await withScript([[replyFor(1, { left: 0x32 })], [replyFor(2, { left: 0xff })]], async () => {
+    const before = await inzone.readBattery(BUDS);
+    const after = await inzone.readBattery(BUDS);
+    assert.deepEqual([before.capacity, after.capacity], [50, 99]);
+    assert.strictEqual(before.charging, false);
+    assert.strictEqual(after.charging, false);
   });
 });

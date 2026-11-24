@@ -81,7 +81,10 @@ async function readBattery(logicalDevice) {
     }
     const earbuds = [parts.left, parts.right].filter((v) => v !== null);
     if (!earbuds.length) throw new Error('headset is off');
-    return { capacity: Math.min(...earbuds), charging: null, parts };
+    // Charging can't be read. It is reported as false rather than null, because the poller would
+    // otherwise guess it from a rising level, and the level jumps whenever the lower earbud goes
+    // into the case.
+    return { capacity: Math.min(...earbuds), charging: false, parts };
   }
   throw new Error('headset is off');
 }
