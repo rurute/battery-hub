@@ -6,10 +6,11 @@
 // the main app detects the exit and respawns it, losing at most one poll cycle.
 const { listLogicalDevices } = require('./catalog');
 const { driverById } = require('./drivers');
+const { expandReceivers } = require('./drivers/lightspeed');
 const { capture } = require('./inspector');
 
 async function handle(id, cmd, args) {
-  if (cmd === 'enumerate') return listLogicalDevices();
+  if (cmd === 'enumerate') return expandReceivers(await listLogicalDevices(), { fresh: !!(args[0] && args[0].fresh) });
   if (cmd === 'readBattery') {
     const [driverId, device, profile] = args;
     return driverById(driverId).readBattery(device, profile);

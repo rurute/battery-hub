@@ -74,7 +74,8 @@ function call(cmd, args, timeoutMs, onProgress = null) {
 
 module.exports = {
   // Listing devices can take several seconds on PCs with many USB devices or a slow receiver.
-  enumerate: () => call('enumerate', [], 20000),
+  // fresh: ask Lightspeed receivers for their pairings again instead of using what they said last.
+  enumerate: (options) => call('enumerate', [options || {}], 20000),
   // Headroom over the drivers' own internal timeouts (generic input-mode waits up to 8s). A
   // worker that dies mid-read says nothing about the device, so that gets one more try.
   readBattery: (driverId, device, profile) => {
