@@ -240,3 +240,49 @@ test('a refresh asks the worker to list receivers afresh, a routine poll does no
     delete devices.pad;
   }
 });
+
+test('two cards on one receiver keep their own settings when the devices swap slots', async () => {
+  const serial = '0123456789ab';
+  const parentId = `1133:50503:${serial}`;
+  const kb = `${parentId}:408e`;
+  const ms = `${parentId}:409f`;
+  const now = Date.now();
+  devices[kb] = { id: kb, driverId: 'hidpp', customName: 'Desk keyboard', customIcon: '⌨️', order: 0, hidden: false, history: [{ t: now - 60000, c: 50, ch: 0 }] };
+  devices[ms] = { id: ms, driverId: 'hidpp', customName: 'Gaming mouse', customIcon: '🖱️', order: 1, hidden: true, history: [{ t: now - 120000, c: 60, ch: 0 }] };
+  const before = JSON.parse(JSON.stringify({ kb: devices[kb], ms: devices[ms] }));
+
+  const parent = { id: parentId, serialNumber: serial, expanded: true, channels: [] };
+  const child = (id, wpid, slot) => ({ id, serialNumber: serial, channels: [], receiver: { slot, wpid, kind: 1 } });
+  const listings = [
+    [parent, child(kb, 0x408e, 1), child(ms, 0x409f, 2)],
+    [parent, child(ms, 0x409f, 1), child(kb, 0x408e, 2)],
+  ];
+  let listing = 0;
+  const reads = [];
+  const { enumerate, readBattery } = hidClient;
+  hidClient.enumerate = async () => listings[Math.min(listing++, 1)];
+  hidClient.readBattery = async (driverId, device) => {
+    reads.push(device);
+    return { capacity: device.receiver.wpid === 0x408e ? 95 : 81, charging: false };
+  };
+  try {
+    await poller.pollOnce(() => {}, { force: true });
+    await poller.pollOnce(() => {}, { force: true });
+
+    assert.ok(devices[kb] && devices[ms], 'both cards are kept');
+    for (const [id, was] of [[kb, before.kb], [ms, before.ms]]) {
+      for (const key of ['customName', 'customIcon', 'order', 'hidden']) assert.deepEqual(devices[id][key], was[key], `${id} ${key}`);
+    }
+    assert.equal(devices[kb].history[0].c, 50);
+    assert.equal(devices[kb].history[devices[kb].history.length - 1].c, 95);
+    assert.equal(devices[kb].lastReading.capacity, 95);
+    assert.deepEqual(devices[ms].history, before.ms.history);
+    assert.equal(devices[ms].lastReading, undefined);
+    assert.equal(reads.filter((d) => d.id === kb).pop().receiver.slot, 2);
+  } finally {
+    hidClient.enumerate = enumerate;
+    hidClient.readBattery = readBattery;
+    delete devices[kb];
+    delete devices[ms];
+  }
+});
