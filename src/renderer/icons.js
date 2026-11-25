@@ -21,7 +21,7 @@ const ICON_PATHS = {
 
 function iconFor(product, driverId) {
   const p = (product || '').toLowerCase();
-  if (driverId === 'mchose' || driverId === 'audeze' || p.includes('headset') || p.includes('headphone') || p.includes('earbud') || p.includes('buds')) return 'headset';
+  if (driverId === 'mchose' || driverId === 'audeze' || driverId === 'inzone' || p.includes('headset') || p.includes('headphone') || p.includes('earbud') || p.includes('buds')) return 'headset';
   if (driverId === 'playstation' || p.includes('xbox')) return 'controller';
   if (driverId === 'kysona' || p.includes('mouse') || /\bmx (master|anywhere)\b|\b(g|gpro) ?\d{3}\b/.test(p)) return 'mouse';
   if (p.includes('keyboard')) return 'keyboard';
