@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Versions follow
 
 ## [Unreleased]
 
+### Added
+
+- ELECOM BlueLED Mouse over Bluetooth (056e:00e5). It doesn't give Windows its battery and never sends it on its own,
+  so a scan found nothing; it now gets its HID Battery Strength report by asking for it.
+
 ## [2.0.7] - 2026-11-25
 
 A hotfix for 2.0.6.
