@@ -195,9 +195,38 @@ function readLog(file, now = Date.now(), read = fs.readFileSync) {
   });
 }
 
+// When the whole app is ended from outside (Task Manager, a script, Windows shutting down), Electron
+// reports every helper process as "crashed" with exit code -1 in the same instant, and they land in
+// the log as errors. That is the app being closed, not crashing, so it isn't counted. A burst counts
+// as one only when it has at least two lines, all of them helper processes gone with exit code -1;
+// a real crash has its own exit code and comes alone, or with other errors that keep it counted.
+const BURST_MS = 1000;
+const ENDED_FROM_OUTSIDE = /\] (ERROR child|FATAL render)-process-gone: \{.*"exitCode":-1[,}]/;
+const timeOf = (line) => Date.parse((/^\[([^\]]+)\]/.exec(line) || [])[1]);
+
+function splitForcedCloses(errors) {
+  const crashes = [];
+  let forcedCloses = 0;
+  let burst = [];
+  const flush = () => {
+    if (burst.length >= 2 && burst.every((l) => ENDED_FROM_OUTSIDE.test(l))) forcedCloses++;
+    else crashes.push(...burst);
+    burst = [];
+  };
+  for (const line of errors) {
+    if (burst.length && !(Math.abs(timeOf(line) - timeOf(burst[burst.length - 1])) <= BURST_MS)) flush();
+    burst.push(line);
+  }
+  flush();
+  return { crashes, forcedCloses };
+}
+
 function checkCrashes(errors) {
-  if (errors.length < CRASHES_WORTH_MENTIONING) return check('errors', 'Recent errors', 'ok', errors.length ? `${errors.length} in the last week.` : 'None in the last week.');
-  return check('errors', 'Recent errors', 'warn', `${errors.length} in the last week.`, { side: APP });
+  const { crashes, forcedCloses } = splitForcedCloses(errors);
+  const summary = crashes.length ? `${crashes.length} in the last week.` : 'None in the last week.';
+  const ended = forcedCloses ? ` The app was ended from outside ${count(forcedCloses, 'time')} (Windows shutting down, or ended in Task Manager), which isn't counted.` : '';
+  if (crashes.length < CRASHES_WORTH_MENTIONING) return check('errors', 'Recent errors', 'ok', summary + ended);
+  return check('errors', 'Recent errors', 'warn', summary + ended, { side: APP });
 }
 
 function verdictOf(checks) {
@@ -438,9 +467,9 @@ async function runChecks(deps) {
   ].filter(Boolean);
   const verdict = verdictOf(checks);
   const facts = { version: deps.version, packaged: deps.packaged, windows: os.release(), arch: os.arch(), electron: process.versions.electron };
-  const report = formatReport({ checks, verdict, facts, errors });
+  const report = formatReport({ checks, verdict, facts, errors: splitForcedCloses(errors).crashes });
   const shown = checks.map(({ device, files, error, fingerprint, ...rest }) => rest);
   return { checks: shown, verdict, report, ...requestUrl(report) };
 }
 
-module.exports = { runChecks, deviceReport, worksReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage };
+module.exports = { runChecks, deviceReport, worksReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage, splitForcedCloses, checkCrashes };

@@ -49,7 +49,7 @@ function pointsToPath(points) {
 }
 
 // Dates in the app's language rather than Windows'.
-const dateLocale = () => ({ es: 'es-ES', zh: 'zh-CN', he: 'he-IL' })[window.bhLanguage && window.bhLanguage()] || undefined;
+const dateLocale = () => ({ es: 'es-ES', zh: 'zh-CN', he: 'he-IL', pt: 'pt-BR' })[window.bhLanguage && window.bhLanguage()] || undefined;
 
 function formatTick(ts, range) {
   const d = new Date(ts);
@@ -242,6 +242,7 @@ function renderDetail() {
   }
 
   renderAlert(dev);
+  renderStaleAlert(dev);
   offerReadReport(dev);
   offerWorksReport(dev);
 
@@ -271,6 +272,40 @@ async function saveAlert(threshold) {
   renderAlert(dev);
   positionSegThumbs(sheet);
   await window.batteryHub.setDeviceAlert(dev.id, threshold);
+}
+
+// The old reading alert: a device follows Settings (null), uses its own days (1-14) or is off (0).
+const STALE_DEFAULT_DAYS = 2;
+function staleModeOf(dev) {
+  if (dev.staleAlertDays === 0) return 'off';
+  return typeof dev.staleAlertDays === 'number' ? 'custom' : 'default';
+}
+function renderStaleAlert(dev) {
+  const mode = staleModeOf(dev);
+  document.querySelectorAll('#detail-stale-mode button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.value === mode);
+  });
+  document.getElementById('detail-stale-stepper').hidden = mode !== 'custom';
+  const input = document.getElementById('detail-stale-value');
+  if (mode === 'custom' && document.activeElement !== input) input.value = dev.staleAlertDays;
+  let hint;
+  if (mode === 'custom') hint = 'Alert when the last reading is older than';
+  else if (mode === 'off') hint = 'Off for this device';
+  else if (currentSettings.notifyStale) {
+    const days = currentSettings.notifyStaleDays ?? STALE_DEFAULT_DAYS;
+    hint = `Same as Settings (${days} ${days === 1 ? 'day' : 'days'})`;
+  }
+  else hint = 'Off in Settings';
+  setText('detail-stale-hint', hint);
+}
+
+async function saveStaleAlert(days) {
+  const dev = state.saved[detail.id];
+  if (!dev) return;
+  dev.staleAlertDays = days;
+  renderStaleAlert(dev);
+  positionSegThumbs(sheet);
+  await window.batteryHub.setDeviceStaleAlert(dev.id, days);
 }
 
 function openDetail(id) {
@@ -341,6 +376,27 @@ document.getElementById('detail-alert-value').addEventListener('change', (e) => 
   v = Math.max(5, Math.min(95, v));
   input.value = v;
   saveAlert(v);
+});
+
+document.querySelectorAll('#detail-stale-mode button').forEach((button) => {
+  button.addEventListener('click', () => {
+    const dev = state.saved[detail.id];
+    if (!dev) return;
+    const mode = button.dataset.value;
+    if (mode === staleModeOf(dev)) return;
+    if (mode === 'default') saveStaleAlert(null);
+    else if (mode === 'off') saveStaleAlert(0);
+    else saveStaleAlert(currentSettings.notifyStaleDays ?? STALE_DEFAULT_DAYS);
+  });
+});
+
+document.getElementById('detail-stale-value').addEventListener('change', (e) => {
+  const input = e.target;
+  let v = Math.round(Number(input.value));
+  if (Number.isNaN(v)) v = STALE_DEFAULT_DAYS;
+  v = Math.max(1, Math.min(14, v));
+  input.value = v;
+  saveStaleAlert(v);
 });
 
 window.addEventListener('resize', () => { if (detail.id !== null) renderChart(); });

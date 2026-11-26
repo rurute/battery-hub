@@ -1,5 +1,4 @@
-// SONY INZONE Buds over its USB dongle, checked against the reply captured on real hardware in
-// fork Issue #3.
+// SONY INZONE Buds over its USB dongle, checked against a reply captured on real hardware.
 const test = require('node:test');
 const assert = require('node:assert');
 const Module = require('node:module');

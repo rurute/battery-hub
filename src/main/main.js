@@ -83,7 +83,8 @@ function applyLoginItem() {
   const startMinimized = !!store.getSetting('startMinimized');
   app.setLoginItemSettings({
     openAtLogin,
-    args: startMinimized ? ['--hidden'] : [],
+    // Run from source (electron.exe), Windows must also be told which app folder to open.
+    args: [...(app.isPackaged ? [] : [app.getAppPath()]), ...(startMinimized ? ['--hidden'] : [])],
   });
 }
 
@@ -102,12 +103,26 @@ function broadcast(deviceState) {
         charging: !!(reading && reading.charging) && deviceState.online !== false,
         offline: deviceState.online === false,
         offLabel: offLabel(deviceState),
+        readAt: deviceState.lastReadingAt || null,
         product: deviceState.product,
         driverId: deviceState.driverId,
         customIcon: deviceState.customIcon,
       });
       flyout.update(tray.list());
     } catch (e) { logLine('ERROR', `tray update failed: ${e && e.stack || e}`); }
+  }
+}
+
+const STALE_CHECK_MS = 30 * 60 * 1000;
+
+// Old reading alerts (notifier.checkStale), for every saved device. The device keeps which reading
+// was alerted, so a restart doesn't repeat it.
+function checkStaleReadings() {
+  for (const device of Object.values(store.getDevices())) {
+    try {
+      const patch = notifier.checkStale(device);
+      if (patch) store.upsertDevice(device.id, patch);
+    } catch (e) { logLine('ERROR', `old reading check failed: ${e && e.message}`); }
   }
 }
 
@@ -214,8 +229,12 @@ function quitApp() {
   app.quit();
 }
 
-// Surface renderer/GPU/utility process crashes so a blanked window leaves a trail.
-app.on('render-process-gone', (e, wc, details) => logLine('FATAL', `render-process-gone: ${JSON.stringify(details)}`));
+// Surface renderer/GPU/utility process crashes so a blanked window leaves a trail. Not while Windows
+// is ending the session (shutdown, restart, sign-out): it stops every process then, and those aren't
+// crashes. The support check also skips a whole-app end it finds in the log (diagnostics.js).
+let sessionEnding = false;
+app.on('session-end', () => { sessionEnding = true; logLine('INFO', 'Windows is ending the session'); });
+app.on('render-process-gone', (e, wc, details) => { if (!sessionEnding) logLine('FATAL', `render-process-gone: ${JSON.stringify(details)}`); });
 // The app only ever shows its own pages, so nothing in a window may go to a website or open a new
 // one. Links meant for the browser go through app:open-external.
 app.on('web-contents-created', (e, contents) => {
@@ -223,7 +242,7 @@ app.on('web-contents-created', (e, contents) => {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
 });
 
-app.on('child-process-gone', (e, details) => logLine('ERROR', `child-process-gone: ${JSON.stringify(details)}`));
+app.on('child-process-gone', (e, details) => { if (!sessionEnding) logLine('ERROR', `child-process-gone: ${JSON.stringify(details)}`); });
 
 app.whenReady().then(() => {
   logLine('INFO', `app ready (v${app.getVersion()}) — logging to ${LOG_FILE}`);
@@ -248,6 +267,9 @@ app.whenReady().then(() => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('devices-changed');
   });
   poller.start(broadcast);
+  // A device with no reading sends no updates, so its old reading alert is checked on a clock.
+  checkStaleReadings();
+  setInterval(checkStaleReadings, STALE_CHECK_MS);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(true);
@@ -327,6 +349,13 @@ ipcMain.handle('devices:set-icon', (evt, { id, icon }) => {
   return store.upsertDevice(id, { customIcon: icon || null });
 });
 
+// Old reading alert for one device: days its last reading may age (null = off, the default).
+ipcMain.handle('devices:set-stale-alert', (evt, { id, days }) => {
+  const saved = store.upsertDevice(id, { staleAlertDays: notifier.staleDaysOf(days) });
+  checkStaleReadings();
+  return saved;
+});
+
 // Low battery level for one device (null = use the level in Settings).
 ipcMain.handle('devices:set-alert', (evt, { id, threshold }) => {
   const n = Number(threshold);
@@ -346,11 +375,20 @@ ipcMain.handle('devices:set-hidden', (evt, { id, hidden }) => {
   return saved;
 });
 
+// A Cancel can come while the device is still being looked up, before the scan itself exists, so
+// it is remembered here as well as sent to the scan.
+let captureCancelled = false;
 ipcMain.handle('devices:capture', (evt, id) => poller.withPollingPaused(async () => {
+  captureCancelled = false;
   const live = (await hidClient.enumerate()).find((d) => d.id === id);
+  if (captureCancelled) return [];
   if (!live) throw new Error('device not connected');
   return hidClient.capture(live);
 }));
+ipcMain.handle('devices:cancel-capture', () => {
+  captureCancelled = true;
+  return hidClient.cancelCapture();
+});
 
 ipcMain.handle('devices:poll-now', async () => {
   const results = [];
@@ -371,6 +409,7 @@ ipcMain.handle('settings:set', (evt, patch) => {
   if ('theme' in patch) applyTheme();
   if ('launchAtLogin' in patch || 'startMinimized' in patch) applyLoginItem();
   if ('pollIntervalSec' in patch) restartPoller();
+  if ('notifyStale' in patch || 'notifyStaleDays' in patch) checkStaleReadings();
   if ('trayEnabled' in patch && !patch.trayEnabled) tray.destroyAll();
   if ('trayEnabled' in patch && patch.trayEnabled) restartPoller();
   if ('trayMode' in patch) {

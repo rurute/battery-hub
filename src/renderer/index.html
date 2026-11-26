@@ -124,8 +124,10 @@
                 <option value="system">System</option>
                 <option value="en">English</option>
                 <option value="es">Español</option>
+                <option value="pt">Português (Brasil)</option>
                 <option value="zh">中文</option>
                 <option value="he">עברית</option>
+                <option value="ru">Русский</option>
               </select>
             </div>
             <div class="settings-row">
@@ -189,6 +191,23 @@
                 <span class="settings-hint">Notify when a device finishes charging.</span>
               </div>
               <button class="toggle" data-setting="notifyCharged" role="switch"><span class="toggle-knob"></span></button>
+            </div>
+            <div class="settings-row">
+              <div class="settings-label">
+                <span class="settings-title">Old reading alert</span>
+                <span class="settings-hint">Notify when a device's last reading gets old, for devices read only now and then. Each device can turn it off or set its own days.</span>
+              </div>
+              <button class="toggle" data-setting="notifyStale" role="switch"><span class="toggle-knob"></span></button>
+            </div>
+            <div class="settings-row" data-depends="notifyStale">
+              <div class="settings-label">
+                <span class="settings-title">Old after</span>
+                <span class="settings-hint">Alert when the last reading is older than this.</span>
+              </div>
+              <div class="stepper">
+                <input type="number" data-setting="notifyStaleDays" min="1" max="14" step="1" aria-label="Days" />
+                <span class="stepper-unit">days</span>
+              </div>
             </div>
           </div>
 
@@ -328,6 +347,22 @@
           <div class="stepper" id="detail-alert-stepper" hidden>
             <input type="number" id="detail-alert-value" min="5" max="95" step="5" aria-label="Alert level for this device" />
             <span class="stepper-unit">%</span>
+          </div>
+        </div>
+
+        <div class="chart-head">
+          <h3>Old reading alert</h3>
+          <div class="segmented" id="detail-stale-mode">
+            <button data-value="default" class="active">Default</button>
+            <button data-value="custom">Custom</button>
+            <button data-value="off">Off</button>
+          </div>
+        </div>
+        <div class="alert-row">
+          <p class="alert-hint" id="detail-stale-hint"></p>
+          <div class="stepper" id="detail-stale-stepper" hidden>
+            <input type="number" id="detail-stale-value" min="1" max="14" step="1" aria-label="Days for this device" />
+            <span class="stepper-unit">days</span>
           </div>
         </div>
 

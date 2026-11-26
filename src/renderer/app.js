@@ -283,8 +283,11 @@ function buildDeviceCard(dev) {
   const menuBtn = el.querySelector('.menu-btn');
   const dropdown = el.querySelector('.menu-dropdown');
   const recalBtn = el.querySelector('.menu-recalibrate');
-  // Recalibrate only makes sense for hand-calibrated (generic) devices.
-  if (dev.driverId !== 'generic') recalBtn.remove();
+  // A hand-calibrated (generic) device is recalibrated. A supported one can be set up with a scan
+  // too: its Add device row only offers Add, and when its built-in reading fails, the scan is how its
+  // owner sends the bytes that fix it (issue #92). Windows-read devices have nothing to scan.
+  if (dev.driverId === 'system') recalBtn.remove();
+  else if (dev.driverId !== 'generic') recalBtn.textContent = 'Set up';
 
   menuBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -508,7 +511,21 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-document.getElementById('rescan-btn').addEventListener('click', refreshDiscover);
+// The icon turns while the list is fetched, at least long enough to be seen.
+async function triggerRescan() {
+  const btn = document.getElementById('rescan-btn');
+  if (btn.classList.contains('spinning')) return;
+  btn.classList.add('spinning');
+  const shown = new Promise((r) => setTimeout(r, 600));
+  try {
+    await refreshDiscover();
+  } finally {
+    await shown;
+    btn.classList.remove('spinning');
+  }
+}
+
+document.getElementById('rescan-btn').addEventListener('click', triggerRescan);
 
 // ---------- calibration wizard ----------
 
@@ -550,9 +567,20 @@ async function runCapture() {
         <span>Turn your device off and on now</span>
       </div>
       <div class="scan-progress"><div class="scan-bar" id="scan-bar"></div></div>
-      <div class="scan-remaining"><span id="scan-timer">${SCAN_SECONDS}</span>s remaining</div>
+      <div class="scan-foot">
+        <div class="scan-remaining"><span id="scan-timer">${SCAN_SECONDS}</span>s remaining</div>
+        <button class="btn btn-ghost" id="cancel-capture-btn">Cancel</button>
+      </div>
     </div>
   `;
+  let cancelled = false;
+  const cancelBtn = document.getElementById('cancel-capture-btn');
+  cancelBtn.addEventListener('click', () => {
+    cancelled = true;
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = 'Cancelling…';
+    window.batteryHub.cancelCapture().catch(() => {});
+  });
   const bar = document.getElementById('scan-bar');
   const timerEl = document.getElementById('scan-timer');
   const startedAt = Date.now();
@@ -578,6 +606,12 @@ async function runCapture() {
 
   clearInterval(ticker);
   btn.disabled = false;
+  if (cancelled) {
+    // Nothing is shown or reported from a scan the user stopped: it may have missed the frame.
+    btn.textContent = 'Start scan';
+    results.innerHTML = '<div class="step-card"><div class="step-desc">Scan cancelled.</div></div>';
+    return;
+  }
   btn.textContent = 'Scan again';
   state.calibration.frames = frames;
   renderCaptureResults();

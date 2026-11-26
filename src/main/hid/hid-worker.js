@@ -9,15 +9,32 @@ const { driverById } = require('./drivers');
 const { expandReceivers } = require('./drivers/lightspeed');
 const { capture } = require('./inspector');
 
+// Scans in progress, so a Cancel from the window can stop them. Messages are handled as they
+// come, so a cancel arrives while the scan is still running.
+const scans = new Set();
+
 async function handle(id, cmd, args) {
   if (cmd === 'enumerate') return expandReceivers(await listLogicalDevices(), { fresh: !!(args[0] && args[0].fresh) });
+  if (cmd === 'cancelCapture') {
+    for (const scan of scans) scan.abort();
+    return scans.size > 0;
+  }
   if (cmd === 'readBattery') {
     const [driverId, device, profile] = args;
     return driverById(driverId).readBattery(device, profile);
   }
   if (cmd === 'identify') return driverById(args[0]).identify(args[1]);
   if (cmd === 'capture') {
-    return capture(args[0], { onProgress: (frames) => process.parentPort.postMessage({ id, progress: frames }) });
+    const scan = new AbortController();
+    scans.add(scan);
+    try {
+      return await capture(args[0], {
+        onProgress: (frames) => process.parentPort.postMessage({ id, progress: frames }),
+        signal: scan.signal,
+      });
+    } finally {
+      scans.delete(scan);
+    }
   }
   throw new Error(`unknown hid command: ${cmd}`);
 }

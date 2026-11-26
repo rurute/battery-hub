@@ -99,5 +99,7 @@ module.exports = {
       })
       .finally(recycle);
   },
+  // Ends a running scan early; capture() then resolves with what it had seen. No worker, no scan.
+  cancelCapture: () => (child ? call('cancelCapture', [], 4000) : Promise.resolve(false)),
   stop: () => { if (child) { try { child.kill(); } catch (_) {} child = null; } rejectAll('hid client stopped'); },
 };

@@ -31,9 +31,12 @@ function frameKey(channel, reportKind, reportId, hex) {
   return `${channel.usagePage}:${channel.usage}:${reportKind}:${reportId}:${hex}`;
 }
 
-async function capture(logicalDevice, { pingOutputs = true, onProgress = null } = {}) {
+// `signal` (an AbortSignal) ends the scan early when the user cancels it; what was seen so far is
+// still returned.
+async function capture(logicalDevice, { pingOutputs = true, onProgress = null, signal = null } = {}) {
   const frames = new Map(); // key -> frame (dedup identical repeats, keep latest timestamp + count)
   const deadline = Date.now() + CAPTURE_MS;
+  const over = () => Date.now() >= deadline || !!(signal && signal.aborted);
   const snapshot = () => Array.from(frames.values()).sort((a, b) => b.lastSeen - a.lastSeen);
 
   function record(channel, reportKind, reportId, bytes) {
@@ -62,6 +65,7 @@ async function capture(logicalDevice, { pingOutputs = true, onProgress = null } 
   }
 
   async function watchChannel(channel) {
+    if (over()) return; // cancelled before this channel was even opened
     let dev;
     try {
       dev = await session.acquire(channel.path);
@@ -77,14 +81,14 @@ async function capture(logicalDevice, { pingOutputs = true, onProgress = null } 
     // past it, the main process has given up on the scan (hid-client.js).
     for (const id of FEATURE_IDS_TO_TRY) {
       for (const len of FEATURE_LENGTHS_TO_TRY) {
-        if (Date.now() >= deadline) break;
+        if (over()) break;
         if (await readFeature(channel, dev, id, len)) supported.push([id, len]);
       }
     }
 
     let nextFeaturePoll = Date.now() + FEATURE_POLL_MS;
     let nextPing = 0;
-    while (Date.now() < deadline) {
+    while (!over()) {
       if (pingOutputs && isVendor && Date.now() >= nextPing) {
         await dev.write(Buffer.alloc(17, 0)).catch(() => {});
         nextPing = Date.now() + PING_MS;

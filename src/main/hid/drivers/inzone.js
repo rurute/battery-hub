@@ -1,7 +1,6 @@
-// SONY INZONE Buds over its USB dongle (054c:0ec2). The battery GET and its reply were checked on
-// real hardware in fork Issue #3, following the protocol notes of openinzone
-// (github.com/penguinwokrs/openinzone), inzone-buds-battery-tray, InzoneBattery and
-// InzoneBudsBattery.
+// SONY INZONE Buds over its USB dongle (054c:0ec2). The battery GET and its reply follow the
+// protocol notes of openinzone (github.com/penguinwokrs/openinzone), inzone-buds-battery-tray,
+// InzoneBattery and InzoneBudsBattery, and were checked on real hardware.
 //
 // Request on the command collection (0xFF04/0x0001), report 0x02, 64 bytes:
 //   02 0C | 01 00 FC 08 96 C3 41 04 01 <TID lo> <TID hi> <checksum>

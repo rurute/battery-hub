@@ -72,19 +72,86 @@ async function readBattery(logicalDevice) {
   if (compx.matches(logicalDevice)) return compx.readBattery(logicalDevice);
   const channels = commandChannels(logicalDevice);
   if (!channels.length) throw new Error('no command channel');
-  let lastError = null;
+  // A channel that refuses the request, or has no input report and doesn't answer through feature
+  // reports either, passes to the next one. If none answers, the error names what each one said, so
+  // a device report shows where it failed.
+  const failures = [];
   for (const channel of channels) {
     try {
       return await readFrom(channel);
     } catch (e) {
-      if (!/cannot write/i.test(e.message)) throw e;
-      lastError = e;
+      if (!/cannot write|could not read/i.test(e.message)) throw e;
+      failures.push({ channel, error: e });
     }
   }
-  throw lastError;
+  if (failures.length === 1) throw failures[0].error;
+  const name = (c) => `${c.usagePage.toString(16)}:${c.usage === undefined ? '----' : c.usage.toString(16).padStart(4, '0')}`;
+  throw new Error(failures.map((f) => `${name(f.channel)} ${f.error.message}`).join('; '));
 }
 
+// Some receivers in this family, such as 25a7:fa07 (Redragon M901P-KS, issue #92) and 25a7:fa7c
+// (AJAZZ AJ199, issue #196), have report 8 only as a 17-byte feature report, so the command
+// collection has no input report and every read fails. Those are asked with SetFeature and
+// answered with GetFeature. A path is remembered as feature-only once a read fails there and
+// forgotten again if the feature way fails too.
+const featureOnly = new Set();
+const FEATURE_WAIT_MS = 150;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sameBytes = (a, b) => a.length >= b.length && b.every((x, i) => a[i] === x);
+
 async function readFrom(channel) {
+  if (featureOnly.has(channel.path)) return readByFeature(channel);
+  try {
+    return await readByInput(channel);
+  } catch (e) {
+    if (!/could not read/i.test(e.message)) throw e;
+    featureOnly.add(channel.path);
+    try {
+      return await readByFeature(channel);
+    } catch (featureError) {
+      if (featureError.message === 'mouse is off') throw featureError;
+      // Not a feature-only receiver either: report what went wrong both ways.
+      throw new Error(`${e.message} (feature reports: ${featureError.message})`);
+    }
+  }
+}
+
+// The answer can take a moment, so it is read a few times before the request is sent again.
+const FEATURE_READS = 4;
+async function askByFeature(channel, dev, request) {
+  await session.sendFeatureReport(channel.path, dev, request);
+  for (let i = 0; i < FEATURE_READS; i++) {
+    await sleep(FEATURE_WAIT_MS);
+    const answer = await session.getFeatureReport(channel.path, dev, request[0], FRAME_LENGTH);
+    if (!sameBytes(answer, request)) return answer; // our own request read back is no answer
+  }
+  return [];
+}
+
+async function readByFeature(channel) {
+  try {
+    const dev = await session.acquire(channel.path);
+    const deadline = Date.now() + RESPONSE_TIMEOUT_MS;
+    let offInARow = 0;
+    while (Date.now() < deadline) {
+      const status = parseStatus(await askByFeature(channel, dev, STATUS_REQUEST));
+      if (status === false) {
+        if (++offInARow >= OFF_ANSWERS) throw new Error('mouse is off');
+      } else {
+        offInARow = 0;
+        const reading = parseFrame(await askByFeature(channel, dev, BATTERY_REQUEST));
+        if (reading) return reading;
+      }
+      await sleep(REPOKE_MS);
+    }
+    throw new Error('timeout waiting for battery response');
+  } catch (e) {
+    if (e.message !== 'mouse is off') featureOnly.delete(channel.path);
+    throw e;
+  }
+}
+
+async function readByInput(channel) {
   const dev = await session.acquire(channel.path);
   await session.readQueued(channel.path, dev); // a late reply to an old request is stale
 

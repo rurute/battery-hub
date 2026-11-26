@@ -222,6 +222,7 @@ test('devices are routed to the right driver, and unknown ones are left alone', 
   const id = (d) => (detectDriver(d) || { id: null }).id;
   assert.equal(id(device(0x046d, 0x0ab5, 'G733', [channel(0xff43, 0x0202, 3), channel(0xff00, 2, 2)])), 'tabled');
   assert.equal(id(device(0x046d, 0xc548, 'USB Receiver', [channel(0xff00, 2, 2)])), 'hidpp');
+  assert.equal(id(device(0x046d, 0xc54f, 'USB Receiver', [channel(1, 6, 0), channel(0xff43, 0x0301, 2), channel(1, 2, 1), channel(0xff43, 0x0302, 2), channel(0x0c, 1, 2)])), 'hidpp');
   assert.equal(id(device(0x1532, 0x00a6, 'Razer', [channel(1, 2, 0)])), 'razer');
   assert.equal(id(device(0x054c, 0x0ce6, 'DualSense', [channel(1, 5, 3)])), 'playstation');
   assert.equal(id(device(0x3329, 0x4b19, 'Audeze Maxwell', [channel(0xff13, 1, 3)])), 'audeze');
@@ -587,6 +588,10 @@ test('the Beken/Xenta receiver broadcast is read, and the link-blink frame is no
   assert.deepEqual(beken.parseFrame([0x03, 0xe5, 0x40, 0x03, 40]), { capacity: 40, charging: true });
   assert.equal(beken.parseFrame([0x03, 0xe5, 0x01, 0x00, 0x00]), null);
   assert.equal(beken.parseFrame([0x03, 0xe5, 0x40, 0x01, 0xc8]), null);
+  // An Attack Shark X11 receiver (issue #175) sends 55 where others send e5, same layout.
+  assert.deepEqual(beken.parseFrame([0x03, 0x55, 0x40, 0x01, 100]), { capacity: 100, charging: false });
+  assert.equal(beken.parseFrame([0x03, 0x55, 0x01, 0x00, 0x00]), null);
+  assert.equal(beken.parseFrame([0x03, 0x44, 0x40, 0x01, 50]), null);
   const channels = [{ usagePage: 1, usage: 2, path: 'm' }, { usagePage: 0x0a, path: 'v' }, { usagePage: 0x0b, path: 'w' }];
   assert.equal(detectDriver({ vendorId: 0x1d57, productId: 0xfa60, channels }).id, 'beken');
 });
@@ -632,6 +637,15 @@ test('HyperX Cloud III, Cloud II Core and Cloud III S read the way auto94 docume
   assert.deepEqual(s.parse(frame([0x0c, 0x02, 0x03, 0x01, 0x00, 0x06, 40])), { capacity: 40 });
   assert.equal(s.parse(frame([0x0c, 0x02, 0x03, 0x01, 0x00, 0x06, 0xff])).offline, true);
   assert.ok(entry(0x03f0, 0x0d93)); // Cloud Stinger 2 Wireless
+  { // #206: its collection is not on interface 0, and its reports are 20 bytes
+    const stinger = entry(0x03f0, 0x0d93);
+    assert.equal(stinger.name, 'HyperX Cloud Stinger 2 Wireless');
+    assert.equal(stinger.channel.interface, undefined);
+    assert.equal(stinger.steps[0].request.length, 20);
+    const reply = [0x06, 0xff, 0xbb, 0x02, 0, 0, 0, 87, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    assert.deepEqual(stinger.steps[0].parse(reply), { capacity: 87 });
+    assert.equal(entry(0x03f0, 0x018b).channel.interface, 0);
+  }
 });
 
 test('YJX-chip receivers answer the gmouse battery request on 0xFF01/0x0010', () => {
@@ -643,4 +657,132 @@ test('YJX-chip receivers answer the gmouse battery request on 0xFF01/0x0010', ()
   const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
   assert.equal(detectDriver({ vendorId: 0xa8a5, productId: 0x2255, channels: [ch(1, 2), ch(0xffa5, 0x88), ch(0xff01, 0x10)] }).id, 'yjx');
   assert.equal(detectDriver({ vendorId: 0x249a, productId: 0x5c2f, channels: [ch(1, 2), ch(0xff01, 0x10)] }).id, 'yjx');
+});
+
+test('G3 A revisions use Gmouse by branded model name on the vendor channel', () => {
+  const yjx = require('../src/main/hid/drivers/yjx');
+  const device = (fields = {}) => ({
+    vendorId: 0x3837, productId: 0x9999, product: 'MCHOSE G3 A',
+    channels: [{ usagePage: 1, usage: 2 }, { usagePage: 0xff01, usage: 0x10 }],
+    ...fields,
+  });
+  for (const fields of [
+    { product: 'G3A' },
+    { product: 'g3 a Mouse' },
+    { vendorId: 0x9999, manufacturer: 'MCHOSE', product: 'G3A Mouse' },
+    { vendorId: 0x9999, product: 'mchose g3a' },
+    { vendorId: 0x9999, manufacturer: '迈从', product: 'G3 A' },
+  ]) {
+    assert.equal(detectDriver(device(fields)).id, 'yjx', JSON.stringify(fields));
+  }
+  for (const fields of [
+    { vendorId: 0x9999, product: 'OtherBrand G3A', manufacturer: 'OtherBrand' },
+    { product: 'MCHOSE G3 Ultra' },
+    { product: 'MCHOSE G3AB' },
+    { product: '' },
+    { channels: [{ usagePage: 1, usage: 2 }] },
+    { channels: [{ usagePage: 0xff01, usage: 1 }] },
+  ]) {
+    assert.equal(yjx.matches(device(fields)), false, JSON.stringify(fields));
+  }
+  const realtek = device({ productId: 0x4150, product: 'MCHOSE A5 Ultra' });
+  assert.equal(detectDriver(realtek).id, 'mchose-mouse');
+});
+
+test('G3 A checks online status before accepting a receiver battery cached while off', async () => {
+  const exchange = require('../src/main/hid/drivers/exchange');
+  const original = exchange.exchange;
+  const driverPath = require.resolve('../src/main/hid/drivers/yjx');
+  const cached = require.cache[driverPath];
+  let online = false;
+  const commands = [];
+  exchange.exchange = async (channel, request, accept) => {
+    commands.push(request[2]);
+    if (request[2] === 0xed && online === null) throw new Error('timeout waiting for battery response');
+    if (request[2] === 0xed) return accept([0xaa, 0xed, 0, 0, 0, 0, 0, 0, online ? 2 : 1]);
+    return accept([0xaa, 0x30, 0, 0, 0, 0, 0, 0, 68, 0]);
+  };
+  delete require.cache[driverPath];
+  try {
+    const yjx = require(driverPath);
+    const device = { vendorId: 0x3837, productId: 0x9999, product: 'G3 A', channels: [{ path: 'g3a', usagePage: 0xff01, usage: 0x10 }] };
+    await assert.rejects(yjx.readBattery(device), /^Error: mouse is off$/);
+    assert.deepEqual(commands, [0xed]);
+    online = true;
+    commands.length = 0;
+    assert.deepEqual(await yjx.readBattery(device), { capacity: 68, charging: false });
+    assert.deepEqual(commands, [0xed, 0x30]);
+    online = null;
+    commands.length = 0;
+    const legacy = { ...device, vendorId: 0xa8a5, productId: 0x2255 };
+    assert.deepEqual(await yjx.readBattery(legacy), { capacity: 68, charging: false });
+    assert.deepEqual(commands, [0xed, 0x30]);
+    commands.length = 0;
+    await yjx.readBattery({ ...legacy, product: 'Wireless Receiver' });
+    assert.deepEqual(commands, [0x30]);
+    assert.equal(yjx.parseStatus([0xaa, 0xed]), null);
+    assert.equal(yjx.parseStatus([0xaa, 0x30, 0, 0, 0, 0, 0, 0, 2]), null);
+    assert.equal(yjx.parseStatus([0xaa, 0xed, 0, 0, 0, 0, 0, 0, 255]), null);
+  } finally {
+    exchange.exchange = original;
+    require.cache[driverPath] = cached;
+  }
+});
+
+test('Ultra-Link 8K (Keychron and SKN) asks b3 06 and reads level | charging at byte 20', () => {
+  for (const vendorId of [0x3434, 0x362d]) {
+    const step = entry(vendorId, 0xd028).steps[0];
+    assert.deepEqual(step.request.slice(0, 3), [0xb3, 0x06, 0x00]);
+    assert.equal(step.request.length, 64);
+    // From HaloBattery issue #373: an M6 8K at 99%, then on its charger.
+    const reply = [0xb4, 0x06, 0x00, 0x44, 0x44, 0x04, 0x90, 0x01, 0x20, 0x03, 0x40, 0x06, 0x80, 0x0c, 0x88, 0x13, 0x15, 0x05, 0x04, 0x0a, 0x63, 0x00];
+    assert.deepEqual(step.parse(frame(reply)), { capacity: 99, charging: false });
+    reply[20] = 0xe3;
+    assert.deepEqual(step.parse(frame(reply)), { capacity: 99, charging: true });
+    assert.equal(step.parse(frame([0xb3, 0x06, ...new Array(30).fill(0)])), null); // an echo
+  }
+});
+
+test('Beken receivers also send 03 55 40 and fa55 is listened to', () => {
+  const beken = require('../src/main/hid/drivers/beken');
+  assert.deepEqual(beken.parseFrame([0x03, 0x55, 0x40, 0x01, 0x64]), { capacity: 100, charging: false });
+  assert.equal(beken.parseFrame([0x03, 0x56, 0x40, 0x01, 0x64]), null);
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  assert.equal(detectDriver({ vendorId: 0x1d57, productId: 0xfa55, channels: [ch(1, 2), ch(0x0a, 1)] }).id, 'beken');
+});
+
+test('ATK Holtek receivers answer get-config 82 with level | charging at byte 8', () => {
+  const atk = require('../src/main/hid/drivers/atk-holtek');
+  assert.deepEqual(atk.REQUEST, [0x00, 0x82, 0, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(atk.parseReply([0x82, 3, 1, 0, 0, 0, 0, 0, 83, 1]), { capacity: 83, charging: false });
+  assert.deepEqual(atk.parseReply([0x82, 3, 1, 0, 0, 0, 0, 0, 0x80 | 50, 1]), { capacity: 50, charging: true });
+  assert.equal(atk.parseReply([0x82, 3, 1, 0, 0, 0, 0, 0, 0, 0]).offline, true);
+  assert.equal(atk.parseReply([0x07, 0xa1, 1, 0, 3, 2, 0, 0x1f, 0, 0x65]), null);
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  const nano = { vendorId: 0x373b, productId: 0x1178, channels: [ch(0xff10, 1), ch(1, 2), ch(1, 6), ch(0xff00, 1), ch(0x0c, 1), ch(0xff11, 1)] };
+  assert.equal(detectDriver(nano).id, 'atkHoltek');
+});
+
+test('HyperX Cloud Flight S asks BB 02 and reads byte 7 of the echo', () => {
+  const step = entry(0x0951, 0x16ea).steps[0];
+  assert.deepEqual(step.request.slice(0, 17), [0x06, 0x00, 0x02, 0x00, 0x9a, 0x00, 0x00, 0x68, 0x4a, 0x8e, 0x0a, 0x00, 0x00, 0x00, 0xbb, 0x02, 0x00]);
+  assert.equal(step.request.length, 62);
+  assert.deepEqual(step.parse(frame([0x0b, 0, 0xbb, 0x02, 0, 0, 0, 73])), { capacity: 73 });
+  assert.equal(step.parse(frame([0x0b, 0, 0xbb, 0x03, 1, 0, 0, 0])), null);
+  assert.equal(step.parse(frame([0x0a, 0, 0xbb, 0x02, 0, 0, 0, 73])), null);
+  assert.equal(step.parse(frame([0x0b, 0, 0xbb, 0x02, 0, 0, 0, 0])).offline, true);
+});
+
+test('Razer BlackShark V3 asks class 0x21 with the XOR byte and reads byte 13', () => {
+  const step = entry(0x1532, 0x0577).steps[0];
+  assert.deepEqual(step.request.slice(0, 11), [0x02, 0x00, 0x60, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x80, 0x21]);
+  assert.equal(step.request[62], 0xc7); // as Joule logs it
+  assert.equal(step.request.length, 64);
+  const reply = [0x02, 0x02, 0x60, 0, 0, 0, 0x05, 0, 0, 0x80, 0x21, 0x01, 0x01, 35];
+  assert.deepEqual(step.parse(frame(reply)), { capacity: 35 });
+  assert.equal(step.parse(frame([0x02, 0x02, 0x60, 0, 0, 0, 0x05, 0, 0, 0x80, 0x21, 0x01, 0x01, 0xff])).offline, true);
+  // From the issue #21 scan: class 0x60, not the battery.
+  assert.equal(step.parse(frame([0x02, 0x02, 0x60, 0, 0, 0, 0x0a, 0, 0, 0x80, 0x60, 0x01, 0x06, 0x08])), null);
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  assert.equal(detectDriver({ vendorId: 0x1532, productId: 0x0577, channels: [ch(0x0c, 1), ch(0xff13, 1), ch(0x0b, 5), ch(0xff14, 1)] }).id, 'tabled');
 });

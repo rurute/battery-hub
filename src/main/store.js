@@ -9,10 +9,12 @@ const DEFAULT_SETTINGS = {
   sortMode: 'urgent',       // 'urgent' | 'manual'
   reduceMotion: false,      // disable all UI animations/transitions
   notifyEnabled: true,
-  language: 'system',       // 'system' follows Windows; or en, es, zh, he
+  language: 'system',       // 'system' follows Windows; or en, es, zh, he, pt, ru
   notifyThreshold: 20,      // notify when battery drops below this %
   notifyCharging: true,     // notify when a device starts charging
   notifyCharged: false,     // notify when a device finishes charging
+  notifyStale: false,       // old reading alert for every device (each can override it)
+  notifyStaleDays: 2,       // ... when its last real reading is older than this many days
   trayEnabled: true,        // show tray battery icons
   trayMode: 'list',         // 'perDevice' | 'list'
   closeToTray: true,        // hide to tray instead of quitting on close
