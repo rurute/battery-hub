@@ -1,0 +1,76 @@
+name: Fork release
+
+# Fork only (rurute/battery-hub). Builds the installer and publishes a Release on the fork whenever a
+# fork release tag is pushed, so fork builds auto-update from the fork instead of from upstream:
+#
+#   git tag vX.Y.Z-fork.N && git push origin vX.Y.Z-fork.N
+#
+# X.Y.Z must be package.json's version (the upstream version merged in). scripts/fork-version.js sets
+# the fork version and the fork as the publish target inside CI only; package.json in the repo stays
+# upstream's. Upstream's release.yml (tags v*) is disabled on the fork. See docs/fork.md.
+
+on:
+  push:
+    tags:
+      - 'v*-fork.*'
+
+permissions:
+  contents: write   # needed to create the GitHub Release and upload assets
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set the fork version and publish target
+        run: node scripts/fork-version.js --tag $env:GITHUB_REF_NAME
+
+      # Created first so electron-builder's parallel uploads share one release (see release.yml).
+      - name: Create the draft release
+        run: gh release create $env:GITHUB_REF_NAME --draft --title $env:GITHUB_REF_NAME --notes ""
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        run: npm run dist -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and upload the branded installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run installer
+          gh release upload $env:GITHUB_REF_NAME (Get-ChildItem dist/Battery-Hub-Installer-*.exe).FullName --clobber
+
+      - name: Generate and upload SHA-256 checksum
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            $name = $_.Name -replace ' ', '-'
+            Write-Host "SHA256: $hash  $name"
+            "$hash  $name"
+          } | Out-File -FilePath dist/SHA256SUMS.txt -Encoding ascii
+          gh release upload $env:GITHUB_REF_NAME dist/SHA256SUMS.txt --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A personal build needs no review step: publish it at once. electron-builder may mark a
+      # version with a pre-release part (-fork.N) as a pre-release; clear that too.
+      - name: Publish the release
+        run: gh release edit $env:GITHUB_REF_NAME --draft=false --prerelease=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

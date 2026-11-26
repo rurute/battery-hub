@@ -9,6 +9,9 @@ name: Build (manual)
 #
 # Only the branded installer is kept: it carries the electron-builder installer inside it, so keeping
 # both would double the download.
+#
+# The build is versioned X.Y.Z-fork.0.<run number> and updates from the fork's Releases, so the next
+# fork release (X.Y.Z-fork.1 and up) replaces it. See docs/fork.md.
 
 on:
   workflow_dispatch:
@@ -31,6 +34,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Set the fork version and publish target
+        run: node scripts/fork-version.js --dev ${{ github.run_number }}
 
       - name: Build the electron-builder installer
         run: npm run dist -- --publish never
