@@ -5,7 +5,10 @@ name: Build (manual)
 #
 #   gh workflow run build.yml -R rurute/battery-hub --ref <branch>
 #   gh run watch -R rurute/battery-hub
-#   gh run download -R rurute/battery-hub -D dist/ci
+#   scripts/download-build.sh      (faster than gh run download -R rurute/battery-hub -D dist/ci)
+#
+# Only the branded installer is kept: it carries the electron-builder installer inside it, so keeping
+# both would double the download.
 
 on:
   workflow_dispatch:
@@ -42,12 +45,12 @@ jobs:
           branch="${GITHUB_REF_NAME//\//-}"
           echo "ARTIFACT_NAME=battery-hub-${branch}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
-      - name: Upload the installers
+      - name: Upload the installer
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
-          path: |
-            dist/Battery-Hub-Installer-*.exe
-            dist/Battery-Hub-Update-*.exe
+          path: dist/Battery-Hub-Installer-*.exe
           if-no-files-found: error
+          # An installer is already compressed; zipping it again only slows the upload.
+          compression-level: 0
           retention-days: 14
