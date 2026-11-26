@@ -30,7 +30,9 @@ const routes = new Map(); // channel path (plus wireless PID for a device on a r
 
 function channelOf(logicalDevice) {
   const on = (page, usage) => logicalDevice.channels.find((c) => c.usagePage === page && c.usage === usage);
-  return on(0xff00, 0x02) || on(0xff43, 0x0202);
+  // ff43:0302 is the long collection on the newest Lightspeed receiver, 046d:c54f (issue #113):
+  // its HidP caps give 0x0301 7 bytes and 0x0302 20, as SuperLightBattery's issue #3 lists them.
+  return on(0xff00, 0x02) || on(0xff43, 0x0202) || on(0xff43, 0x0302);
 }
 
 function matches(logicalDevice) {

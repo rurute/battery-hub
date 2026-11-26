@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { writeManifest, verify } = require('../src/main/package-check');
 const {
-  runChecks, deviceReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage,
+  runChecks, deviceReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage, splitForcedCloses, checkCrashes,
 } = require('../src/main/diagnostics');
 
 function tempPackage() {
@@ -135,6 +135,40 @@ test('only recent errors are picked out of the log', () => {
   ].join('\n');
   assert.deepEqual(readLog('x', now, () => log), ['[2026-11-02T11:00:00.000Z] ERROR something']);
   assert.deepEqual(readLog('x', now, () => { throw new Error('none'); }), []);
+});
+
+test('the whole app being ended at once is not counted as crashes', () => {
+  // Every helper process "crashed" with exit code -1 in the same instant: the app was ended from
+  // outside (Task Manager, Stop-Process, Windows shutting down). Reproduced on Windows 11 by ending
+  // the app's processes; the log got exactly these lines each time.
+  const ended = [
+    '[2026-11-24T17:55:31.044Z] ERROR child-process-gone: {"type":"Utility","reason":"crashed","exitCode":-1,"serviceName":"network.mojom.NetworkService","name":"Network Service"}',
+    '[2026-11-24T17:55:31.046Z] ERROR child-process-gone: {"type":"Utility","reason":"crashed","exitCode":-1,"serviceName":"node.mojom.NodeService","name":"Node Utility Process"}',
+    '[2026-11-24T17:55:31.049Z] ERROR child-process-gone: {"type":"GPU","reason":"crashed","exitCode":-1,"serviceName":"GPU"}',
+  ];
+  const window = [
+    '[2026-11-24T18:10:53.800Z] ERROR child-process-gone: {"type":"Utility","reason":"crashed","exitCode":-1,"serviceName":"node.mojom.NodeService","name":"Node Utility Process"}',
+    '[2026-11-24T18:10:53.803Z] FATAL render-process-gone: {"reason":"crashed","exitCode":-1}',
+  ];
+  const gpu = '[2026-11-24T19:00:00.000Z] ERROR child-process-gone: {"type":"GPU","reason":"crashed","exitCode":-1073741819,"serviceName":"GPU"}';
+  const other = '[2026-11-24T19:00:00.500Z] ERROR notifier failed: boom';
+
+  assert.deepEqual(splitForcedCloses([...ended, ...window]), { crashes: [], forcedCloses: 2 });
+  // A real crash still counts, even right next to another error.
+  assert.deepEqual(splitForcedCloses([gpu, other]), { crashes: [gpu, other], forcedCloses: 0 });
+  // A lone helper exiting with -1 isn't the whole app being ended.
+  assert.deepEqual(splitForcedCloses([ended[2]]), { crashes: [ended[2]], forcedCloses: 0 });
+  // A real error inside the burst keeps the whole burst counted.
+  const mixed = [ended[0], other.replace('19:00:00.500', '17:55:31.045')];
+  assert.deepEqual(splitForcedCloses(mixed), { crashes: mixed, forcedCloses: 0 });
+
+  // The check: 11 lines from 5 forced closes are not a warning, and say what happened.
+  const many = [...ended, ...window, ...ended.map((l) => l.replace('17:55', '14:45'))];
+  const result = checkCrashes(many);
+  assert.equal(result.status, 'ok');
+  assert.match(result.detail, /^None in the last week\. The app was ended from outside 3 times/);
+  // Real crashes still warn.
+  assert.equal(checkCrashes([gpu, gpu.replace('19:00', '20:00'), gpu.replace('19:00', '21:00')]).status, 'warn');
 });
 
 test('nothing personal survives sanitizing', () => {

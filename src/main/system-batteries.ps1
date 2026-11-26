@@ -11,6 +11,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 public class Found {
   public string Id;
@@ -22,6 +23,7 @@ public class Found {
 public static class Batteries {
   const uint FILTER_PRESENT = 0x100, FILTER_CLASS = 0x200;
   const string BLUETOOTH_CLASS = "{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}";
+  const string SYSTEM_CLASS = "{4d36e97d-e325-11ce-bfc1-08002be10318}";
 
   [StructLayout(LayoutKind.Sequential)]
   struct PropertyKey { public Guid Fmtid; public uint Pid; }
@@ -49,23 +51,52 @@ public static class Batteries {
     return buffer;
   }
 
-  public static List<Found> Bluetooth() {
-    var found = new List<Found>();
+  static string[] Ids(string classGuid) {
     uint flags = FILTER_CLASS | FILTER_PRESENT;
     int length;
-    if (CM_Get_Device_ID_List_SizeW(out length, BLUETOOTH_CLASS, flags) != 0) return found;
+    if (CM_Get_Device_ID_List_SizeW(out length, classGuid, flags) != 0) return new string[0];
     var ids = new char[length];
-    if (CM_Get_Device_ID_ListW(BLUETOOTH_CLASS, ids, length, flags) != 0) return found;
-    foreach (string id in new string(ids).Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries)) {
+    if (CM_Get_Device_ID_ListW(classGuid, ids, length, flags) != 0) return new string[0];
+    return new string(ids).Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
+  }
+
+  static string Text(byte[] value) { return value == null ? null : Encoding.Unicode.GetString(value).TrimEnd('\0'); }
+
+  public static List<Found> Bluetooth() {
+    var found = new List<Found>();
+    // Classic Bluetooth device nodes (BTHENUM\DEV_<mac>\...), by address: their name and link state.
+    var devices = new Dictionary<string, uint>();
+    foreach (string id in Ids(BLUETOOTH_CLASS)) {
+      uint node;
+      if (CM_Locate_DevNodeW(out node, id, 0) != 0) continue;
+      var dev = Regex.Match(id, @"^BTHENUM\\DEV_([0-9A-F]{12})\\", RegexOptions.IgnoreCase);
+      if (dev.Success) devices[dev.Groups[1].Value.ToUpperInvariant()] = node;
+      byte[] battery = Read(node, BATTERY);
+      if (battery == null || battery.Length < 1) continue;
+      byte[] connected = Read(node, CONNECTED);
+      found.Add(new Found {
+        Id = id,
+        Name = Text(Read(node, NAME)) ?? "Bluetooth device",
+        Battery = battery[0],
+        Connected = connected == null || connected[0] != 0,
+      });
+    }
+    // Classic headsets: Windows keeps the battery on the Hands-Free service node (System class),
+    // whose own link state reads false. Name and link state come from the device node instead.
+    foreach (string id in Ids(SYSTEM_CLASS)) {
+      if (!id.StartsWith(@"BTHENUM\", StringComparison.OrdinalIgnoreCase)) continue;
       uint node;
       if (CM_Locate_DevNodeW(out node, id, 0) != 0) continue;
       byte[] battery = Read(node, BATTERY);
       if (battery == null || battery.Length < 1) continue;
-      byte[] connected = Read(node, CONNECTED);
-      byte[] name = Read(node, NAME);
+      var mac = Regex.Match(id, @"&([0-9A-F]{12})_C[0-9A-F]+$", RegexOptions.IgnoreCase);
+      uint device;
+      if (!mac.Success || !devices.TryGetValue(mac.Groups[1].Value.ToUpperInvariant(), out device)) continue;
+      if (Read(device, BATTERY) != null) continue; // already listed from the device node
+      byte[] connected = Read(device, CONNECTED);
       found.Add(new Found {
         Id = id,
-        Name = name == null ? "Bluetooth device" : Encoding.Unicode.GetString(name).TrimEnd('\0'),
+        Name = Text(Read(device, NAME)) ?? Text(Read(node, NAME)) ?? "Bluetooth headset",
         Battery = battery[0],
         Connected = connected == null || connected[0] != 0,
       });

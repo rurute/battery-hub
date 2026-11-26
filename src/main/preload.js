@@ -9,9 +9,11 @@ contextBridge.exposeInMainWorld('batteryHub', {
   renameDevice: (id, name) => ipcRenderer.invoke('devices:rename', { id, name }),
   setDeviceIcon: (id, icon) => ipcRenderer.invoke('devices:set-icon', { id, icon }),
   setDeviceAlert: (id, threshold) => ipcRenderer.invoke('devices:set-alert', { id, threshold }),
+  setDeviceStaleAlert: (id, days) => ipcRenderer.invoke('devices:set-stale-alert', { id, days }),
   setDeviceHidden: (id, hidden) => ipcRenderer.invoke('devices:set-hidden', { id, hidden }),
   reorderDevices: (ids) => ipcRenderer.invoke('devices:reorder', ids),
   capture: (id) => ipcRenderer.invoke('devices:capture', id),
+  cancelCapture: () => ipcRenderer.invoke('devices:cancel-capture'),
   pollNow: () => ipcRenderer.invoke('devices:poll-now'),
   onBatteryUpdate: (cb) => {
     const listener = (evt, data) => cb(data);

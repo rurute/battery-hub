@@ -20,7 +20,8 @@
   }
 
   function attrs(el) {
-    if (skipped(el)) return;
+    // Form values are user input, but placeholder and aria-label are translatable UI attributes.
+    if (!el || el.nodeName === 'SCRIPT' || el.nodeName === 'STYLE' || (el.closest && el.closest('[data-no-translate]'))) return;
     el.bhAttrs = el.bhAttrs || {};
     for (const name of ATTRS) {
       const value = el.getAttribute(name);
@@ -55,7 +56,7 @@
 
   function apply(next) {
     lang = next;
-    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang;
+    document.documentElement.lang = ({ zh: 'zh-CN', pt: 'pt-BR' })[lang] || lang;
     document.documentElement.dir = lang === 'he' ? 'rtl' : 'ltr';
     walk(document.body);
     document.querySelectorAll('template').forEach((t) => walk(t.content));

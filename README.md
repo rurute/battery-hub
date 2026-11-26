@@ -50,7 +50,7 @@ Windows SmartScreen shows a **"Windows protected your PC"** prompt because the i
 Every release is built and published by [GitHub Actions](.github/workflows/release.yml) directly from a tagged commit — no binaries are uploaded by hand — and each one ships a `SHA256SUMS.txt`. To confirm your download matches, run:
 
 ```powershell
-(Get-FileHash "Battery-Hub-Installer-2.0.5.exe" -Algorithm SHA256).Hash
+(Get-FileHash "Battery-Hub-Installer-2.0.7.exe" -Algorithm SHA256).Hash
 ```
 
 and compare the result with the checksum in that release's `SHA256SUMS.txt`. Pasting the same hash into [VirusTotal](https://www.virustotal.com/gui/home/search) will show any scan results for the exact file.
@@ -97,22 +97,24 @@ Battery Hub reads these directly. Anything else can usually be added with **Set 
 | Xbox | Wireless controllers |
 | PlayStation | DualSense, DualSense Edge, DualShock 4 (USB and Bluetooth) |
 | Sony | INZONE Buds (USB dongle) |
-| Logitech | Mice and keyboards using HID++ 2.0 (Bolt, Unifying, Lightspeed); G PRO, G533, G535, G633, G733, G933, G935 headsets |
-| Razer | 81 wireless mice and keyboards |
+| Logitech | Mice and keyboards using HID++ 2.0 (Bolt, Unifying, Lightspeed, including the newest receiver of the PRO X3 SUPERSTRIKE); G PRO, G533, G535, G633, G733, G933, G935 headsets |
+| Razer | 81 wireless mice and keyboards; BlackShark V3 and V3 Pro headsets |
 | SteelSeries | Arctis 1, 7, 7+, 9, Nova 3P, Nova 5, Nova 7, Nova Pro Wireless headsets; Aerox, Prime and Rival 3 Wireless mice |
-| HyperX | Cloud Alpha Wireless, Cloud Flight, Cloud II Wireless, Cloud II Core Wireless, Cloud III Wireless, Cloud III S Wireless, Cloud Stinger 2 Wireless |
+| HyperX | Cloud Alpha Wireless, Cloud Flight, Cloud Flight S, Cloud II Wireless, Cloud II Core Wireless, Cloud III Wireless, Cloud III S Wireless, Cloud Stinger 2 Wireless |
 | Corsair | Void, Void Wireless v2, HS80 MAX, Virtuoso, Virtuoso SE, XT and MAX headsets; Slipstream receiver |
 | Audeze | Maxwell, Maxwell 2 |
 | Astro | A50 Gen 4, A50 Gen 5 |
-| MCHOSE | V9 Turbo+, V9 PRO, X9 headsets; A7 V2 Ultra, A5 Ultra, K7 Ultra, A7 Ultra mice; G75 V2, G87 V2, K87S, K99 V3 keyboards |
-| VXE, ATK, MADLIONS | Dragonfly R1 Pro, NordicMouse and other mice on Compx receivers; ATK NearLink and BitMouse receivers, X1 NearLink |
+| MCHOSE | V9 Turbo+, V9 PRO, X9 headsets; A7 V2 Ultra, A5 Ultra, K7 Ultra, A7 Ultra, G3 A mice; G75 V2, G87 V2, K87S, K99 V3 keyboards |
+| VXE, ATK, MADLIONS | Dragonfly R1 Pro, NordicMouse and other mice on Compx receivers; ATK NearLink and BitMouse receivers, X1 NearLink; ATK 8K Nano and 1K/8K dongles |
 | Glorious, LAMZU | Model O, O-, D, D- Wireless; Maya X and other LAMZU mice |
-| Beken/Xenta 2.4G receiver | Attack Shark and other mice on 1d57:fa60 |
+| Beken/Xenta 2.4G receiver | Attack Shark and other mice on 1d57:fa60 and fa55 |
+| Keychron, SKN | Mice on the Ultra-Link 8K receiver |
+| YJX-chip 2.4G receiver | AJAZZ, XCTECH and other mice on YJX receivers (the same platform as MCHOSE G-series mice) |
 | Compx 2.4G receiver | AULA F87 Pro and F99 Pro, Lingbao K98, MCHOSE G75 keyboards |
 
-Tested on real hardware: VXE NordicMouse, MCHOSE V9 Turbo+, DualSense on USB and Bluetooth, and Logitech MX Master 4 over Bluetooth. The rest are built from the protocols documented by the projects below and checked against those byte layouts, so please [report a device](https://github.com/battery-hub/battery-hub/issues/new?template=device-support.yml) if one misbehaves.
+Tested on real hardware: VXE NordicMouse, MCHOSE V9 Turbo+, DualSense on USB and Bluetooth, Logitech MX Master 4 over Bluetooth, and INZONE Buds on their USB dongle. The rest are built from the protocols documented by the projects below and checked against those byte layouts, so please [report a device](https://github.com/battery-hub/battery-hub/issues/new?template=device-support.yml) if one misbehaves.
 
-Protocol work comes from [HeadsetControl](https://github.com/Sapd/HeadsetControl), [OpenRazer](https://github.com/openrazer/openrazer), [rivalcfg](https://github.com/flozz/rivalcfg) and the Linux kernel's HID drivers.
+Protocol work comes from [HeadsetControl](https://github.com/Sapd/HeadsetControl), [OpenRazer](https://github.com/openrazer/openrazer), [rivalcfg](https://github.com/flozz/rivalcfg), [openinzone](https://github.com/penguinwokrs/openinzone) and the Linux kernel's HID drivers.
 
 A device connected more than one way, such as a controller on its cable and over Bluetooth, shows as one card when both connections report the same Bluetooth address.
 

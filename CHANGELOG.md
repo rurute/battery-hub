@@ -6,6 +6,62 @@ All notable changes to this project are documented here. Versions follow
 
 ## [Unreleased]
 
+## [2.0.7] - 2026-11-25
+
+A hotfix for 2.0.6.
+
+### Added
+
+- A supported device can also be set up with a scan, from its card's menu. Its Add device row only offers Add,
+  so when its reading failed there was no way to send the scan that fixes it (issue #92).
+- An "old reading" alert, off by default: when a device hasn't had a real reading for a number of days, Battery Hub
+  says so, for devices that can only be read now and then (pull request #219 by @maxeinstein-dev).
+
+### Fixed
+
+- Russian: about 30 texts that were still in English (the check, device reports, some settings), and
+  correct plural forms (pull request #215 by @Dfavorit55).
+- Compx receivers that still failed in 2.0.6 (Redragon M901P-KS, issue #92): the other vendor channels are
+  tried too, a feature-report answer is waited for a little longer, and the error says what each channel answered.
+- HyperX Cloud Stinger 2 Wireless wasn't recognised (issue #206): it was looked for on the Cloud II's interface,
+  and is now its own entry, under its own name, with its 20-byte requests.
+- Translations: a new text without a Russian translation shows in English, as in the other languages, instead of
+  failing the checks (issue #217, pull request #220 by @maxeinstein-dev).
+
+## [2.0.6] - 2026-11-25
+
+### Added
+
+- Mice on the Keychron / SKN Ultra-Link 8K receiver (issue #164), using the request that
+  keychron-battery-dkms and HaloBattery checked on a Keychron M6 8K.
+- HyperX Cloud Flight S (issue #180): the headset is asked for its level the way NGENUITY does, so it no longer shows 0%.
+- The Logitech PRO X3 SUPERSTRIKE and other mice on the newest Lightspeed receiver, 046d:c54f (issue #113): its HID++ channel has a new name, so it was skipped.
+- Razer BlackShark V3 and V3 Pro, on the cable and the dongle (issue #21), from openrazer, secbird
+  and Joule, which checked it on both headsets.
+- The ATK 8K Nano Dongle and ATK 1K/8K dongles on the Holtek platform (issue #168), read the way
+  ATK's own web driver reads them.
+- MCHOSE G3 A mouse over 2.4 GHz (pull request #198 by @whyolo1, tested on the mouse).
+- SONY INZONE Buds on their USB dongle, with Left, Right and Case levels in the detail view
+  (pull request #199 by @rurute, tested on the buds).
+- Russian (pull request #153 by @Dfavorit55). It follows a Russian Windows, or can be picked in Settings.
+- Brazilian Portuguese (pull request #183 by @maxeinstein-dev), also used on a Portuguese Windows.
+- A Cancel button while a device scan runs (pull request #187 by @maxeinstein-dev).
+- A switched-off device in the tray popup shows its last reading and how long ago it was
+  (pull request #185 by @maxeinstein-dev).
+
+### Fixed
+
+- The check no longer counts the app being closed from outside (Task Manager, Windows shutting down)
+  as an error (pull request #184 by @maxeinstein-dev).
+- Redragon M901P-KS and AJAZZ AJ199 mice on Compx receivers 25a7:fa07 and 25a7:fa7c: the receiver
+  answers only through feature reports, so the read failed with "could not read data from device" (#92, #196).
+- Attack Shark X11 and other Beken receivers that send `03 55 40` instead of `03 e5 40`
+  (issue #175, pull request #176 by @maxeinstein-dev), and the X11 receiver 1d57:fa55 (issue #88).
+- Classic Bluetooth headsets whose battery Windows keeps on the Hands-Free service now show up
+  (pull request #177 by @maxeinstein-dev).
+- The Rescan button in Add device now spins while it looks for devices.
+- "Open at startup" when the app runs from source (pull request #178 by @maxeinstein-dev).
+
 ## [2.0.5] - 2026-11-24
 
 ### Added
@@ -340,7 +396,9 @@ First stable release, consolidating the 1.0.x and 1.1.x series.
 Initial public release: live battery monitoring for wireless HID devices, per-device tray
 icons, low-battery notifications, history sparklines and the guided calibration wizard.
 
-[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.5...HEAD
+[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.7...HEAD
+[2.0.7]: https://github.com/battery-hub/battery-hub/compare/v2.0.6...v2.0.7
+[2.0.6]: https://github.com/battery-hub/battery-hub/compare/v2.0.5...v2.0.6
 [2.0.5]: https://github.com/battery-hub/battery-hub/compare/v2.0.4...v2.0.5
 [2.0.4]: https://github.com/battery-hub/battery-hub/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/battery-hub/battery-hub/compare/v2.0.2...v2.0.3

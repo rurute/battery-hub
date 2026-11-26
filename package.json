@@ -1,6 +1,6 @@
 {
   "name": "battery-hub",
-  "version": "2.0.5",
+  "version": "2.0.7",
   "description": "Live battery monitor for all your HID devices",
   "author": "Battery Hub contributors",
   "main": "src/main/main.js",
@@ -49,7 +49,10 @@
       "es-419",
       "zh-CN",
       "zh-TW",
-      "he"
+      "he",
+      "pt-BR",
+      "pt-PT",
+      "ru"
     ],
     "win": {
       "target": "nsis",

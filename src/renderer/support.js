@@ -13,10 +13,12 @@ const LONG_NOTE = ' This report is too long for a link, so the full version is a
 const plainError = (e) => e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 const scanHistory = new Map(); // device id -> { scans, frames }, for this run of the app
 
-function supportText(tag, className, text) {
+// keepEnglish marks text that must read exactly as it is sent (the report): the translator skips it.
+function supportText(tag, className, text, keepEnglish) {
   const el = document.createElement(tag);
   el.className = className;
   el.textContent = text;
+  if (keepEnglish) el.dataset.noTranslate = '';
   return el;
 }
 
@@ -77,7 +79,7 @@ function renderResults(result, target = supportResults, sendLabel = 'Send suppor
   preview.className = 'check-report';
   preview.append(
     supportText('summary', '', 'See exactly what the report contains'),
-    supportText('pre', '', result.report),
+    supportText('pre', '', result.report, true),
   );
 
   const note = supportText('div', 'check-note', result.complete ? SEND_NOTE : SEND_NOTE + LONG_NOTE);

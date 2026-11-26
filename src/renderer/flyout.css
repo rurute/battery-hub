@@ -27,15 +27,17 @@ h1 { font-size: 13px; font-weight: 600; }
 button { width: 28px; height: 28px; margin-right: -6px; border: 0; border-radius: 5px; background: transparent; color: var(--text); display: flex; align-items: center; justify-content: center; }
 button:hover { background: var(--hover); }
 button svg { fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
-.row { height: 45px; display: grid; grid-template-columns: 20px minmax(0, 1fr) 40px; gap: 10px; align-items: center; }
+.row { height: 45px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
 .icon { display: flex; align-items: center; justify-content: center; font-size: 15px; }
 .name { display: flex; align-items: center; gap: 4px; }
 .name span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .name svg { flex: none; color: var(--ok); }
-.pct { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pct { min-width: 40px; white-space: nowrap; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 .track { height: 4px; margin-top: 6px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .fill { display: block; height: 100%; border-radius: 2px; background: var(--ok); transform-origin: left center; }
 .row[data-tone="warn"] .fill { background: var(--warn); } .row[data-tone="warn"] .pct { color: var(--warn); }
 .row[data-tone="bad"] .fill { background: var(--bad); } .row[data-tone="bad"] .pct { color: var(--bad); }
 .row.off .pct, .row.off .name { color: var(--sub); font-weight: 400; }
+.row.off .fill { background: var(--sub); opacity: 0.45; }
+.name .ago { flex: none; font-size: 0.85em; opacity: 0.8; }
 .empty { color: var(--sub); padding: 14px 0; }

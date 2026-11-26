@@ -12,8 +12,22 @@ const REQUEST = pad([0x00, 0x55, 0x30, 0xa5, 0x0b, 0x2e, 0x01, 0x01, 0x01], 65);
 
 const channelOf = (d) => d.channels.find((c) => c.usagePage === 0xff01 && c.usage === 0x10);
 
+function isG3a(logicalDevice) {
+  const { vendorId, product, manufacturer } = logicalDevice;
+  const mchose = vendorId === 0x3837 || vendorId === 0xa8a4 || vendorId === 0xa8a5
+    || /mchose|迈从/i.test(manufacturer + ' ' + product);
+  // G3 A revisions share Gmouse, but can have different receiver product ids.
+  return mchose && /\bg3\s*a\b/i.test(product);
+}
+
 function matches(logicalDevice) {
-  return VENDORS.has(logicalDevice.vendorId) && !!channelOf(logicalDevice);
+  return (VENDORS.has(logicalDevice.vendorId) || isG3a(logicalDevice)) && !!channelOf(logicalDevice);
+}
+
+// The receiver keeps returning its last battery reading after the mouse switches off.
+function parseStatus(f) {
+  if (f.length < 9 || f[0] !== 0xaa || f[1] !== 0xed || (f[8] !== 1 && f[8] !== 2)) return null;
+  return f[8] === 2;
 }
 
 function parseReply(f) {
@@ -27,6 +41,14 @@ async function readBattery(logicalDevice) {
   if (!channel) throw new Error('no command channel');
   let reading;
   try {
+    if (isG3a(logicalDevice)) {
+      // Receivers that only answer the battery command can still provide a reading.
+      const online = await exchange(channel, pad([0x00, 0x55, 0xed], 65), parseStatus).catch((e) => {
+        if (/^timeout/.test(e.message)) return null;
+        throw e;
+      });
+      if (online === false) throw new Error('mouse is off');
+    }
     reading = await exchange(channel, REQUEST, parseReply);
   } catch (e) {
     if (/^timeout/.test(e.message)) throw new Error('mouse is not answering');
@@ -36,4 +58,4 @@ async function readBattery(logicalDevice) {
   return reading;
 }
 
-module.exports = { id: 'yjx', matches, readBattery, parseReply, REQUEST };
+module.exports = { id: 'yjx', matches, readBattery, parseReply, parseStatus, REQUEST };

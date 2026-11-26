@@ -19,7 +19,47 @@ const ALERTS = {
   low: (name, cap) => ({ title: 'Low battery', body: `${name} is at ${cap}%. Time to charge.`, icon: LOW_ICON }),
   charging: (name, cap) => ({ title: 'Charging', body: `${name} is charging (${cap}%).`, icon: CHARGING_ICON }),
   charged: (name, cap) => ({ title: 'Fully charged', body: `${name} is charged (${cap}%).`, icon: ICON }),
+  stale: (name, days) => ({
+    title: 'Old reading',
+    body: `${name}: last reading ${days} ${days === 1 ? 'day' : 'days'} ago. Connect it in a way Battery Hub can read, like Bluetooth, to update it.`,
+    icon: ICON,
+  }),
 };
+
+const DAY_MS = 24 * 3600000;
+
+// A device's own setting for the old reading alert: null follows Settings, 0 is off for this
+// device, 1 to 14 is its own number of days.
+function staleDaysOf(value) {
+  const n = Number(value);
+  if (value == null || value === '' || Number.isNaN(n)) return null;
+  if (n <= 0) return 0;
+  return Math.max(1, Math.min(14, Math.round(n)));
+}
+
+// The days that apply to a device, or null when the alert is off for it.
+function staleDaysFor(device, settings) {
+  const own = device.staleAlertDays;
+  if (own === 0) return null;
+  if (typeof own === 'number') return own;
+  return settings.notifyStale ? settings.notifyStaleDays : null;
+}
+
+// The old reading alert, for a device read only now and then (a headset read over Bluetooth but used
+// over a dongle that reports nothing). Off by default; turned on for every device in Settings, and a
+// device can switch it off or use its own days. It has its own switch, apart from low battery alerts.
+// It uses only the age of the last real reading, and alerts once per reading: the caller stores the
+// returned { staleAlertedFor } on the device, so a restart doesn't alert again. Returns null when it
+// didn't alert.
+function checkStale(device, now = Date.now()) {
+  const days = staleDaysFor(device, store.getSettings());
+  if (typeof days !== 'number' || device.hidden || !device.lastReadingAt) return null;
+  if (device.staleAlertedFor === device.lastReadingAt) return null;
+  const age = now - device.lastReadingAt;
+  if (age < days * DAY_MS) return null;
+  post(ALERTS.stale(displayName(device), Math.floor(age / DAY_MS)));
+  return { staleAlertedFor: device.lastReadingAt };
+}
 
 function post({ title, body, icon }) {
   if (!Notification.isSupported()) return;
@@ -71,4 +111,4 @@ function reset(id) {
   chargingAlertAt.delete(id);
 }
 
-module.exports = { check, reset, post, ALERTS };
+module.exports = { check, checkStale, staleDaysOf, reset, post, ALERTS };

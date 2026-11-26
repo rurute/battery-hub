@@ -12,7 +12,7 @@ const { capture } = require('../src/main/hid/inspector');
 Module._load = load;
 
 // Run a full scan against one fake channel, with the clock accelerated so 30s takes moments.
-async function scan(channel, device) {
+async function scan(channel, device, signal) {
   const realNow = Date.now;
   const realSetTimeout = global.setTimeout;
   let offset = 0;
@@ -21,7 +21,7 @@ async function scan(channel, device) {
   global.setTimeout = (fn, ms, ...args) => { offset += ms; return realSetTimeout(fn, 0, ...args); };
   fakeHid.HIDAsync.open = async () => device;
   try {
-    return await capture({ channels: [channel] });
+    return await capture({ channels: [channel] }, { signal });
   } finally {
     Date.now = realNow;
     global.setTimeout = realSetTimeout;
@@ -90,4 +90,29 @@ test('input frames are captured from vendor collections', async () => {
   assert.equal(frames[0].reportKind, 'input');
   assert.equal(frames[0].reportId, 5);
   assert.deepEqual(frames[0].bytes, [5, 1, 80]);
+});
+
+test('a cancelled scan stops right away and keeps what it saw', async () => {
+  const controller = new AbortController();
+  const dev = fakeDevice({
+    read(d) {
+      if (d.reads === 5) controller.abort(); // the user clicks Cancel a moment in
+      return Buffer.from([1, 50, 0, 0]);
+    },
+    feature() { throw new Error('invalid report'); },
+  });
+  const frames = await scan({ path: 'cancel-mid-scan', usagePage: 0xff00, usage: 1 }, dev, controller.signal);
+  // A full 30 s scan reads about 300 times; a cancelled one stops at the next read.
+  assert.ok(dev.reads <= 6, `expected the scan to stop, it read ${dev.reads} times`);
+  assert.equal(frames.length, 1, 'what was seen before cancelling is kept');
+});
+
+test('a scan cancelled before it starts reads nothing', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const dev = fakeDevice({ read() { return Buffer.from([1, 50]); }, feature() { return Buffer.from([1]); } });
+  const frames = await scan({ path: 'cancel-before-start', usagePage: 0xff00, usage: 1 }, dev, controller.signal);
+  assert.equal(dev.reads, 0);
+  assert.equal(dev.featureCalls, 0);
+  assert.deepEqual(frames, []);
 });

@@ -2,8 +2,17 @@
 const rows = document.getElementById('rows');
 const panel = document.getElementById('panel');
 
+function timeAgo(ts) {
+  const m = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`;
+}
+
 function row(d, n) {
   const off = d.offline || d.capacity == null;
+  // A device that's off keeps its last reading, greyed out, like the main window shows it.
+  const known = d.capacity != null;
   const el = document.createElement('div');
   el.className = off ? 'row off' : 'row';
   el.style.setProperty('--n', n);
@@ -18,17 +27,26 @@ function row(d, n) {
   label.textContent = d.name;
   label.dataset.noTranslate = '';
   name.append(label);
+  // How old the greyed-out reading is, so an old number isn't mistaken for a live one.
+  if (off && known && d.readAt) {
+    const ago = document.createElement('span');
+    ago.className = 'ago';
+    ago.textContent = timeAgo(d.readAt);
+    name.append(ago);
+  }
   if (d.charging && !off) name.insertAdjacentHTML('beforeend', iconSvg('flash', 13));
   const track = document.createElement('div');
   track.className = 'track';
   const fill = document.createElement('span');
   fill.className = 'fill';
-  fill.style.width = `${off ? 0 : d.capacity}%`;
+  fill.style.width = `${known ? d.capacity : 0}%`;
   track.append(fill);
   body.append(name, track);
   const pct = document.createElement('div');
   pct.className = 'pct';
-  pct.textContent = off ? 'Off' : `${d.capacity}%`;
+  pct.textContent = known ? `${d.capacity}%` : 'Off';
+  // Why it's greyed out. Only the reason, an existing translated text: the number is beside it.
+  if (off && known) el.title = d.offLabel || 'Not connected';
   el.append(icon, body, pct);
   return el;
 }

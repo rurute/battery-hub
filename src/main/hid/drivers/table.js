@@ -62,9 +62,9 @@ const KINGSTON = 0x0951;
 const CLOUD_FLIGHT_CHARGING_MV = 0x100b;
 const CLOUD_FLIGHT_CURVE = curve([3975, 3900, 3800, 3700, 3648, 0], [100, 80, 50, 25, 8, 0]);
 
-function cloud2Step(command, parse) {
+function cloud2Step(command, parse, length = 52) {
   return {
-    request: pad([0x06, 0xff, 0xbb, command, 0x00], 52),
+    request: pad([0x06, 0xff, 0xbb, command, 0x00], length),
     parse(f) {
       if (f.length < 8 || f[0] !== 0x06 || f[1] !== 0xff || f[2] !== 0xbb || f[3] !== command) return null;
       return parse(f);
@@ -113,6 +113,12 @@ function aeroxBattery(f) {
   const level = ((f[1] & 0x7f) - 1) * 5;
   if (level < 0 || level > 100) return OFFLINE;
   return { capacity: level, charging: !!(f[1] & 0x80) };
+}
+
+function razerHeadsetRequest(command) {
+  const r = pad([0x02, 0x00, 0x60, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x80, command], 64);
+  r[62] = r.slice(0, 62).reduce((x, b) => x ^ b, 0);
+  return r;
 }
 
 const DEVICES = [
@@ -182,6 +188,18 @@ const DEVICES = [
     }],
   },
   {
+    // Issue #180. From windows-taskbar-battery PR #2 (tested on Windows against NGENUITY's level)
+    // and nogenuity's classic.rs, which send the same bytes: report 06 with BB 02 at bytes 14-15;
+    // the answer (report 0x0b, as the #180 scan saw on ff13) echoes BB 02 at bytes 2-3, level at 7.
+    name: 'HyperX Cloud Flight S', kind: 'headset', vendorId: KINGSTON, productIds: [0x16ea, 0x16eb],
+    channel: { usagePage: 0xff13, usage: 0x01 },
+    steps: [{
+      request: pad([0x06, 0x00, 0x02, 0x00, 0x9a, 0x00, 0x00, 0x68, 0x4a, 0x8e, 0x0a, 0x00, 0x00, 0x00, 0xbb, 0x02], 62),
+      parse: (f) => (f.length < 8 || f[0] === 0x0a || f[2] !== 0xbb || f[3] !== 0x02 ? null
+        : f[7] === 0 || f[7] > 100 ? OFFLINE : { capacity: f[7] }),
+    }],
+  },
+  {
     // From auto94's HyperX-Cloud-2-Battery-Monitor (MainForm.cpp, tested on the Core on Windows):
     // write 66 89, the reply carries the level at byte 4 (issues #117, #145). The Cloud III answers
     // on 0xFF13/0x0001; for the Core that project takes the collection with the highest usage.
@@ -201,12 +219,23 @@ const DEVICES = [
     steps: [{ request: pad([0x0c, 0x02, 0x03, 0x01, 0x00, 0x06], 52), parse: (f) => (f.length < 7 || f[0] !== 0x0c || f[5] !== 0x06 ? null : f[6] > 100 ? OFFLINE : { capacity: f[6] }) }],
   },
   {
-    // 0x0d93 is the Cloud Stinger 2 Wireless, which auto94's HyperX-Cloud-2-Battery-Monitor reads the same way.
-    name: 'HyperX Cloud II Wireless', kind: 'headset', vendorId: HP, productIds: [0x0696, 0x018b, 0x0d93],
+    name: 'HyperX Cloud II Wireless', kind: 'headset', vendorId: HP, productIds: [0x0696, 0x018b],
     channel: { usagePage: 0xff90, usage: 0x0303, interface: 0 },
     steps: [
       cloud2Step(0x02, (f) => ({ capacity: clampPercent(f[7]) })),
       cloud2Step(0x03, (f) => ({ charging: f[4] === 1 })),
+    ],
+  },
+  {
+    // Read like the Cloud II Wireless (auto94's HyperX-Cloud-2-Battery-Monitor, HyperHeadset), but its
+    // 0xFF90/0x0303 collection is not on interface 0, so the Cloud II entry never matched it (issue #206).
+    // HyperHeadset probes every interface on Windows for the same reason.
+    // Its reports are 20 bytes long (the scan in #206 and HyperHeadset's packets), not 52.
+    name: 'HyperX Cloud Stinger 2 Wireless', kind: 'headset', vendorId: HP, productIds: [0x0d93],
+    channel: { usagePage: 0xff90, usage: 0x0303 },
+    steps: [
+      cloud2Step(0x02, (f) => ({ capacity: clampPercent(f[7]) }), 20),
+      cloud2Step(0x03, (f) => ({ charging: f[4] === 1 }), 20),
     ],
   },
   {
@@ -308,6 +337,36 @@ const DEVICES = [
       request: pad([0x05, 0x01, 0x00, 0x1a], 64),
       parse: (f) => (f.length < 10 || f[1] !== 0x01 || f[2] !== 0x00 ? null
         : f[8] === 0 || f[8] > 100 ? OFFLINE : { capacity: f[8], charging: f[9] > 0 }),
+    }],
+  },
+  ...[[0x3434, 'Keychron Ultra-Link 8K'], [0x362d, 'SKN Ultra-Link 8K']].map(([vendorId, name]) => ({
+    // Keychron's 8K receiver, also sold under Keychron's SKN brand (issue #164). From the Linux
+    // keychron-battery-dkms module and HaloBattery issue #373, checked there on a real M6 8K:
+    // output report b3 06 on 0xFFC1, the reply b4 06 ... holds level | 0x80 (charging) at byte 20.
+    // Windows refuses it as a feature report. Keyboards behind the receiver may not answer.
+    name, kind: 'mouse', vendorId, productIds: [0xd028],
+    channel: { usagePage: 0xffc1, usage: 0x01 },
+    steps: [{
+      request: pad([0xb3, 0x06], 64),
+      parse: (f) => (f.length < 21 || f[0] !== 0xb4 || f[1] !== 0x06 ? null
+        : (f[20] & 0x7f) === 0 || (f[20] & 0x7f) > 100 ? OFFLINE : { capacity: f[20] & 0x7f, charging: f[20] >= 0x80 }),
+    }],
+  })),
+  {
+    // Razer BlackShark V3 and V3 Pro, cable and dongle (issue #21). openrazer PR 2794 (from Synapse
+    // captures), secbird (checked on a V3 Pro, both PIDs) and Joule (checked on a V3) agree:
+    // output report 2 on 0xFF14, 64 bytes, XOR of bytes 0-61 in byte 62:
+    //   02 00 60 00 00 00 04 00 00 80 21 00 00 ... <xor>    class 0x21 = battery
+    //   reply 02 02 60 00 00 00 05 00 00 80 21 01 01 <level> (01 = reply, 02 = the headset's own push)
+    // 0xff means the radio link isn't up. Asking every ~2 s is reported to drop the link; our poll
+    // is a minute by default and never under 10 s.
+    name: 'Razer BlackShark V3', kind: 'headset', vendorId: 0x1532, productIds: [0x0576, 0x0577, 0x0579, 0x057a],
+    channel: { usagePage: 0xff14, usage: 0x01 },
+    steps: [{
+      request: razerHeadsetRequest(0x21),
+      parse: (f) => (f.length < 14 || f[0] !== 0x02 || f[1] !== 0x02 || f[2] !== 0x60 || f[9] !== 0x80
+        || f[10] !== 0x21 || (f[11] !== 0x01 && f[11] !== 0x02) || f[12] !== 0x01 ? null
+        : f[13] === 0 || f[13] > 100 ? OFFLINE : { capacity: f[13] }),
     }],
   },
   {
