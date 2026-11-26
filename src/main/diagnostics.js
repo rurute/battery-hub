@@ -44,7 +44,8 @@ function sanitize(text, home = os.homedir()) {
 }
 
 function isNewer(latest, current) {
-  const parts = (v) => String(v).replace(/^v/, '').split('.').map(Number);
+  // fork: compare 2.0.7-fork.1 as 2.0.7 (docs/fork.md)
+  const parts = (v) => String(v).replace(/^v/, '').replace(/-.*$/, '').split('.').map(Number);
   const [a, b] = [parts(latest), parts(current)];
   for (let i = 0; i < 3; i++) {
     if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);

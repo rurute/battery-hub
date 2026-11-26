@@ -87,6 +87,14 @@ test('versions compare as numbers', () => {
   assert.equal(isNewer('1.2.0', '1.3.1'), false);
 });
 
+test('a fork version compares by its base version', () => {
+  assert.equal(isNewer('2.0.7', '2.0.7-fork.1'), false);
+  assert.equal(isNewer('v2.0.7', '2.0.7-fork.3'), false);
+  assert.equal(isNewer('2.0.8', '2.0.7-fork.1'), true);
+  assert.equal(isNewer('2.0.6', '2.0.7-fork.1'), false);
+  assert.equal(isNewer('2.0.7-fork.2', '2.0.7-fork.1'), false);
+});
+
 test('a sleeping device is not treated as a problem, but a real error is', () => {
   const base = { id: '1:2:x', product: 'Mouse', lastReadingAt: Date.now() };
   assert.equal(checkDevice({ ...base, online: false }).status, 'ok');
