@@ -16,8 +16,8 @@ const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage.toStrin
 const blueLed = { vendorId: 0x056e, productId: 0x00e5, product: 'Broadcom Bluetooth Wireless Mouse', channels: [ch(0x01, 0x02), ch(0x0c, 0x01), ch(0xff31, 0x01)] };
 
 test('elecom: reads Battery Strength from byte 1 of input report 3', () => {
-  // Captured from a real BlueLED Mouse at 92%: the rest is the mouse's Bluetooth address.
-  assert.deepEqual(elecom.parseReport([0x03, 0x5c, 0xc8, 0x47, 0x8c, 0x2d, 0xd7, 0x47]), { capacity: 92, charging: null });
+  // A real BlueLED Mouse at 92%; the rest is its Bluetooth address (replaced here).
+  assert.deepEqual(elecom.parseReport([0x03, 0x5c, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]), { capacity: 92, charging: null });
   assert.deepEqual(elecom.parseReport([0x03, 100, 0, 0, 0, 0, 0, 0]), { capacity: 100, charging: null });
 });
 
