@@ -20,8 +20,12 @@ function isG3a(logicalDevice) {
   return mchose && /\bg3\s*a\b/i.test(product);
 }
 
+// VGN's YJX mice and receivers (its web driver lists them on 0xFF01/0x0010).
+const VGN_YJX = new Set([0x1001, 0x1a01, 0x1003, 0x1a03]);
+const isVgnYjx = (d) => d.vendorId === 0x391d && VGN_YJX.has(d.productId);
+
 function matches(logicalDevice) {
-  return (VENDORS.has(logicalDevice.vendorId) || isG3a(logicalDevice)) && !!channelOf(logicalDevice);
+  return (VENDORS.has(logicalDevice.vendorId) || isG3a(logicalDevice) || isVgnYjx(logicalDevice)) && !!channelOf(logicalDevice);
 }
 
 // The receiver keeps returning its last battery reading after the mouse switches off.

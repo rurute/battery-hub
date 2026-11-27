@@ -1,5 +1,5 @@
 // One Lightspeed receiver, several devices: each paired device gets its own card.
-// Byte fixtures are what the G913 TKL / G502 X receiver (046d:c547) sent during fork Issue #2.
+// Byte fixtures are what the G913 TKL / G502 X receiver (046d:c547) sent while investigating #210.
 const test = require('node:test');
 const assert = require('node:assert');
 const Module = require('node:module');
@@ -10,7 +10,7 @@ Module._load = function (request, ...rest) {
   return load.call(this, request, ...rest);
 };
 const lightspeed = require('../src/main/hid/drivers/lightspeed');
-const { identityOf, planMerges } = require('../src/main/identity');
+const { identityOf, planMerges, planReceiverMoves } = require('../src/main/identity');
 Module._load = load;
 
 const hex = (t) => t.split(' ').map((b) => parseInt(b, 16));
@@ -59,6 +59,37 @@ test('children of a receiver whose serial looks like a Bluetooth address are nev
   const livePair = { a: { id: `1133:50503:${serial}:408e`, serialNumber: serial }, b: { id: `1133:50503:${serial}:409f`, serialNumber: serial } };
   assert.deepEqual(planMerges(livePair), []);
   assert.equal(identityOf({ id: `1133:50503:${serial}` }), `mac:${serial}`); // unchanged for others
+});
+
+// ---- the receiver's card from before ----
+
+test("a receiver's old card moves to the device in its lowest slot, the one it was reading", () => {
+  const parentId = '1133:50503:ABC';
+  const parent = { id: parentId, expanded: true };
+  const mouse = { id: `${parentId}:409f`, product: 'G502 X LS', receiver: { slot: 2, wpid: 0x409f, kind: 2 } };
+  const keyboard = { id: `${parentId}:408e`, product: 'G913 TKL', receiver: { slot: 1, wpid: 0x408e, kind: 1 } };
+  const card = { id: parentId, driverId: 'hidpp', customName: 'Desk' };
+  const moves = planReceiverMoves({ [parentId]: card }, [parent, mouse, keyboard]);
+  assert.deepEqual(moves, [{ from: card, to: keyboard }]);
+});
+
+test('a receiver card stays where it is when there is nowhere to move it', () => {
+  const parentId = '1133:50503:ABC';
+  const keyboard = { id: `${parentId}:408e`, product: 'G913 TKL', receiver: { slot: 1, wpid: 0x408e, kind: 1 } };
+  const card = { id: parentId, driverId: 'hidpp' };
+  // the receiver could not be asked for its devices
+  assert.deepEqual(planReceiverMoves({ [parentId]: card }, [{ id: parentId }]), []);
+  // the device already has a card of its own
+  const own = { id: keyboard.id, driverId: 'hidpp' };
+  assert.deepEqual(planReceiverMoves({ [parentId]: card, [own.id]: own }, [{ id: parentId, expanded: true }, keyboard]), []);
+  // ...or belongs to another card as one of its connections
+  const other = { id: 'x', driverId: 'hidpp', links: [{ id: keyboard.id, driverId: 'hidpp' }] };
+  assert.deepEqual(planReceiverMoves({ [parentId]: card, x: other }, [{ id: parentId, expanded: true }, keyboard]), []);
+  // a card read by another driver is the user's own setup
+  const generic = { id: parentId, driverId: 'generic' };
+  assert.deepEqual(planReceiverMoves({ [parentId]: generic }, [{ id: parentId, expanded: true }, keyboard]), []);
+  // no card for the receiver
+  assert.deepEqual(planReceiverMoves({}, [{ id: parentId, expanded: true }, keyboard]), []);
 });
 
 // ---- expanding a receiver into its devices ----

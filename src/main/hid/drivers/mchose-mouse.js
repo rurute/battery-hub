@@ -14,7 +14,7 @@ const session = require('../session');
 const MCHOSE = 0x3837;
 const MCHOSE_ALT = 0x5253; // the A7 Ultra's other vendor id, which M HUB matches on its own
 // Product ids M HUB lists with these collections next to the reported ones.
-const PRODUCT_IDS = new Set([0x1001, 0x4150, 0x4022, 0x100b, 0x100c]);
+const PRODUCT_IDS = new Set([0x1001, 0x4150, 0x4022, 0x100a, 0x100b, 0x100c]); // 0x100a: A7 V2 Pro (#234)
 const PAGES = [0xff01, 0xff0b];
 const REPORT_ID = 0x11;
 const READ_DEVICE = 0x06;

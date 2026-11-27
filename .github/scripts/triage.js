@@ -14,6 +14,7 @@ const LABELS = {
   duplicate: { name: 'duplicate', color: 'cfd3d7', description: 'This device was already reported' },
   cant: { name: "can't support", color: 'b60205', description: "The device doesn't share its battery level, so it can't be read" },
   works: { name: 'works', color: '0e8a16', description: 'Someone confirmed Battery Hub reads this device' },
+  supported: { name: 'supported', color: '1d76db', description: 'Battery Hub reads this device now; waiting for someone to confirm' },
   board: { name: BOARD_LABEL, color: '5319e7', description: 'The list of requested devices' },
 };
 const NO_ANSWER = /^_?no response_?$|^(unknown|n\/a|none|-|\?+|no se|不知道)$/i;
@@ -74,6 +75,10 @@ function decide(report, others, latest) {
   if (cant) {
     return { labels: [LABELS.duplicate.name, LABELS.cant.name], close: true, comment: `Thanks! This device (${report.hardware}) was already looked at in #${cant.number}: it doesn't share its battery level, so Battery Hub can't read it. Sorry! If it also has Bluetooth, try connecting that way.` };
   }
+  const supported = same.find((o) => o.supported);
+  if (supported) {
+    return { labels: [LABELS.duplicate.name], close: true, comment: `Thanks! Battery Hub already reads this device (${report.hardware}): see #${supported.number}. Please update to the latest version (Settings → Check for updates) and add it from Add device. If it still doesn't read, tell us in #${supported.number} what its card says.` };
+  }
   if (first) {
     const answered = first.state === 'open'
       ? `Let's continue in #${first.number}: please add a 👍 there, and anything new as a comment.`
@@ -92,10 +97,29 @@ function decide(report, others, latest) {
   return { labels, close: false, comment: null };
 }
 
-// The "Most requested devices" table: one row per hardware, most requested first. Every person who
-// asked counts once, and so does every 👍, but each device links only to its main report: closed
-// copies just send people there. Devices with no open report, or marked can't support, go in their
-// own section below.
+// The "Most requested devices" issue. Requests count each person who asked and each 👍, and each
+// device links only to its main report: closed copies just send people there. The most requested
+// devices come first; the rest, the ones Battery Hub already reads, the ones people confirmed and
+// the ones that can't be read are folded away below.
+
+// A short, readable device name: no "(Standard system devices)" in any language, no company
+// suffixes, no maker said twice ("MCHOSE MCHOSE K99"), and nothing longer than a table cell.
+function cleanName(name) {
+  let n = String(name || '').replace(/_+/g, ' ').replace(/[\u0000-\u001f\u0300-\u036f]/g, '')
+    // A word of Latin letters run into Cyrillic or CJK is a garbled USB string: keep the Latin part.
+    .replace(/\b([A-Za-z0-9]+)[\u0400-\u04ff\u3400-\u9fff]\S*/g, '$1')
+    .replace(/\([^)]*(system|systém|sistem|систем|系统|系統)[^)]*\)/gi, ' ')
+    .replace(/\b(Technology|Electronics|Semiconductor|Corporation|Corp\.?|Co\.,?|Ltd\.?|Inc\.?|INT'L|Computer|Semi\.)(?=\s|,|$)/gi, ' ')
+    .replace(/^HP,\s*/i, '')
+    .replace(/\s*,\s*(?=\s|$)/g, ' ')
+    .replace(/\|/g, '/')
+    .replace(/\s+/g, ' ').trim();
+  n = n.replace(/^(\S+)\s+(?=\1\b)/i, '');           // "Razer Razer Viper" -> "Razer Viper"
+  if (n.length > 45) n = n.split(/(?<=\S{3}),\s|\.\s|\s\(/)[0];  // "Fuxi-H6 (headset), dongle ..." -> "Fuxi-H6"
+  if (n.length > 45) n = `${n.slice(0, 44).trim()}…`;
+  return n || 'Unknown device';
+}
+
 function boardBody(reports, works = []) {
   const rows = new Map();
   for (const r of reports) {
@@ -106,6 +130,7 @@ function boardBody(reports, works = []) {
     row.votes += r.votes || 0;
     row.good = row.good || r.good;
     row.works = row.works || r.works;
+    row.supported = row.supported || r.supported;
     rows.set(r.hardware, row);
   }
   for (const row of rows.values()) {
@@ -113,15 +138,21 @@ function boardBody(reports, works = []) {
     row.main = sorted.find((r) => r.state === 'open' && !r.duplicate) || sorted.find((r) => r.state === 'open')
       || sorted.find((r) => !r.duplicate) || sorted[0];
     // A device marked can't support leaves the ranking even while its report stays open.
-    row.open = sorted.some((r) => r.state === 'open') && !sorted.some((r) => r.cantSupport);
+    row.cant = sorted.some((r) => r.cantSupport);
+    row.open = sorted.some((r) => r.state === 'open') && !row.cant;
   }
   const score = (r) => r.people.size + r.votes;
   const byScore = (x, y) => score(y) - score(x) || x.main.number - y.main.number;
-  const line = (r) => `| ${score(r)} | ${String(r.main.name || '').replace(/\|/g, '/').slice(0, 60)} | \`${r.hardware}\` | #${r.main.number} |${r.good ? ' ✅' : ''} |`;
-  // A device someone confirmed works is listed under Works with only.
-  const open = [...rows.values()].filter((r) => r.open && !r.works).sort(byScore);
-  const closed = [...rows.values()].filter((r) => !r.open && !r.works).sort(byScore);
-  const head = ['| Requests | Device | ID | Report | |', '|---:|---|---|---|---|'];
+  const newestFirst = (x, y) => y.main.number - x.main.number;
+  const line = (r) => `| ${score(r)} | ${cleanName(r.main.name)} | \`${r.hardware}\` | #${r.main.number} |${r.good ? ' ✅' : ''} |`;
+  const head = ['| Asked | Device | ID | Report | Scan |', '|---:|---|---|---|:---:|'];
+  const all = [...rows.values()].filter((r) => !r.works);
+  const supported = all.filter((r) => r.supported && !r.cant).sort(byScore);
+  const waiting = all.filter((r) => r.open && !r.supported);
+  const top = waiting.filter((r) => score(r) >= 2).sort(byScore);
+  const once = waiting.filter((r) => score(r) < 2).sort(newestFirst);
+  const closed = all.filter((r) => !r.open && !r.supported).sort(byScore);
+
   // Works with: one row per hardware a person confirmed, with how many people did.
   const confirmed = new Map();
   for (const w of [...works].sort((x, y) => x.number - y.number)) {
@@ -131,30 +162,25 @@ function boardBody(reports, works = []) {
     confirmed.set(w.hardware, row);
   }
   const worksRows = [...confirmed.values()].sort((x, y) => y.people.size - x.people.size || x.number - y.number)
-    .map((r) => `| ${r.people.size} | ${String(r.name || '').replace(/\|/g, '/').slice(0, 60)} | \`${r.hardware}\` | #${r.number} |`);
+    .map((r) => `| ${r.people.size} | ${cleanName(r.name)} | \`${r.hardware}\` | #${r.number} |`);
+
+  const folded = (summary, header, lines) => (lines.length ? [
+    `<details><summary>${summary} (${lines.length})</summary>`, '', ...header, ...lines, '', '</details>', '',
+  ] : []);
   return [
-    'Every device people have asked Battery Hub to support, most requested first. Updated by a bot on each new report.',
+    'Devices people asked Battery Hub to read. A bot keeps this list up to date.',
     '',
-    'Have one of these? Add a 👍 to its report instead of opening a new one. Requests counts each person who asked and each 👍. ✅ means a report has scan data and the real battery level.',
+    '**Have one of these?** Add a 👍 to its report instead of opening a new one: the most asked-for devices are looked at first. **Asked** counts each person and each 👍. ✅ means the report has a scan and the real battery level, which is what a fix is built from.',
     '',
-    ...head,
-    ...open.map(line),
+    '### Most requested',
     '',
-    `<details><summary>Works with: devices people confirmed Battery Hub reads (${worksRows.length})</summary>`,
+    ...(top.length ? [...head, ...top.map(line)] : ['Nothing yet.']),
     '',
-    '| People | Device | ID | Report |',
-    '|---:|---|---|---|',
-    ...worksRows,
-    '',
-    '</details>',
-    '',
-    `<details><summary>Can't be read: devices that were looked at and closed, or that don't share their battery level (${closed.length})</summary>`,
-    '',
-    ...head,
-    ...closed.map(line),
-    '',
-    '</details>',
-  ].join('\n');
+    ...folded('Asked once, newest first', head, once.map(line)),
+    ...folded('Supported now: update Battery Hub and tell us if yours works', head, supported.map(line)),
+    ...folded('Works: people confirmed Battery Hub reads these', ['| People | Device | ID | Report |', '|---:|---|---|---|'], worksRows),
+    ...folded("Can't be read: closed, or the device doesn't share its battery level", head, closed.map(line)),
+  ].join('\n').trimEnd();
 }
 
 async function allIssues(github, owner, repo) {
@@ -184,6 +210,7 @@ async function updateBoard(github, owner, repo, issues) {
     duplicate: (i.labels || []).some((l) => l.name === LABELS.duplicate.name) || i.state_reason === 'duplicate',
     cantSupport: (i.labels || []).some((l) => l.name === LABELS.cant.name),
     works: (i.labels || []).some((l) => l.name === LABELS.works.name),
+    supported: (i.labels || []).some((l) => l.name === LABELS.supported.name),
   }));
   const body = boardBody(reports, await allWorks(github, owner, repo));
   const boards = await github.paginate(github.rest.issues.listForRepo, { owner, repo, labels: BOARD_LABEL, state: 'all', per_page: 100 });
@@ -207,6 +234,7 @@ async function run({ github, context }) {
       ...parseReport(i), number: i.number, state: i.state,
       duplicate: (i.labels || []).some((l) => l.name === LABELS.duplicate.name) || i.state_reason === 'duplicate',
       cantSupport: (i.labels || []).some((l) => l.name === LABELS.cant.name),
+      supported: (i.labels || []).some((l) => l.name === LABELS.supported.name),
     }));
     const action = decide(parseReport(issue), others, latest);
     const n = { owner, repo, issue_number: issue.number };
@@ -220,4 +248,4 @@ async function run({ github, context }) {
   await updateBoard(github, owner, repo, issues);
 }
 
-module.exports = { run, parseReport, hardwareOf, decide, boardBody, isOlder, isDeviceReport, isWorksReport };
+module.exports = { run, parseReport, hardwareOf, decide, boardBody, cleanName, isOlder, isDeviceReport, isWorksReport };

@@ -6,10 +6,39 @@ All notable changes to this project are documented here. Versions follow
 
 ## [Unreleased]
 
+## [2.0.8] - 2026-11-26
+
 ### Added
 
+- Bluetooth LE mice and keyboards whose battery Windows doesn't show are read from their standard Battery Service,
+  every 5 minutes (issues #237, #240, #218). Read-only, and only for paired devices.
+- Darmoshark M3 and other Darmoshark mice (issue #162), AULA and EWEADN keyboards on their SONiX 2.4G receiver
+  (issues #109, #160), and Telink mice and Wobkey keyboards on the Akko platform (issues #11, #65, #134, #193).
+- ASUS ROG Gladius III AimPoint and the ROG OMNI receiver (issues #118, #86), MSI VERSA 300 Elite (issue #154), Bloody
+  R73 Pro and other Bloody wireless mice (issue #172), Waizowl OGM 8K (issue #169), and the Corsair Void Wireless v2
+  on its cable (issue #106).
+- Rapoo VT7 and VT9 Pro / VT3 MAX mice (issues #51, #197), mice and keyboards on YICHIP receivers such as the AJAZZ AJ159
+  APEX (issues #110, #147, #156, #205, #231), and BY Tech mice such as the PIAO 8K (issues #201, #140), from open-source
+  drivers for each.
+- ASUS ROG Claymore II keyboard, as G-Helper reads it (issue #212), and 2.4G mice on the 1EA7 receiver (issue #48).
+- Akko 8K receivers (38ee:0024, 000f) and other mice on the same platform, from Akko's own web driver (issues #226, #9).
+- VGN Dragonfly 3 MasterGT and its siblings, and VGN's YJX mice, from VGN's web driver (issue #235).
+- More LAMZU mice: TACHI, INCA, Maya, PARO, THORN, Atlantis OG and Mini, under LAMZU's second vendor id 0x37B0.
+- MCHOSE V9 Pro 2 headset (3837:6011), with the protocol from MCHOSE's own M HUB (issue #229), and the A7 V2 Pro
+  mouse's receiver 3837:100a (issue #234).
+- Nintendo Switch Pro Controllers, their clones and Joy-Cons over Bluetooth, in five steps (issue #232).
 - ELECOM BlueLED Mouse over Bluetooth (056e:00e5). It doesn't give Windows its battery and never sends it on its own,
-  so a scan found nothing; it now gets its HID Battery Strength report by asking for it.
+  so a scan found nothing; it now gets its HID Battery Strength report by asking for it (pull request #239 by @rurute).
+- Several devices on one Logitech Lightspeed receiver (046d:c547) each get their own card; before, only the first one
+  that answered was read (pull request #230 by @rurute, issue #210).
+
+### Fixed
+
+- MCHOSE X9: a reading while it charges or is full, and "asleep" when it sleeps; only a headset on battery was read.
+- Redragon M901P-KS, M913 and VSG Aquila Fly receivers (25a7:fa07, fa3f) that still failed in 2.0.7: they take the
+  request on one collection and answer on another (0xFF01, report 9), sometimes as a 0-10 level (issues #92, #224).
+- The check said "Couldn't reach GitHub to compare" when GitHub's hourly limit for anonymous requests was used up
+  on the network. It now reads the latest version from the releases page instead.
 
 ## [2.0.7] - 2026-11-25
 
@@ -401,7 +430,8 @@ First stable release, consolidating the 1.0.x and 1.1.x series.
 Initial public release: live battery monitoring for wireless HID devices, per-device tray
 icons, low-battery notifications, history sparklines and the guided calibration wizard.
 
-[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.7...HEAD
+[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.8...HEAD
+[2.0.8]: https://github.com/battery-hub/battery-hub/compare/v2.0.7...v2.0.8
 [2.0.7]: https://github.com/battery-hub/battery-hub/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/battery-hub/battery-hub/compare/v2.0.5...v2.0.6
 [2.0.5]: https://github.com/battery-hub/battery-hub/compare/v2.0.4...v2.0.5

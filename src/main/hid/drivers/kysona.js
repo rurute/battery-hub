@@ -33,25 +33,42 @@ const COMPX_CHIP_VENDOR_IDS = new Set([0x373b, 0x25a7, 0x260d]);
 const hasCollection = (logicalDevice, usagePage, usage) => logicalDevice.channels.some((c) => c.usagePage === usagePage && c.usage === usage);
 const hasCompxLayout = (logicalDevice) => hasCollection(logicalDevice, 0xff02, 0x0002) && hasCollection(logicalDevice, 0xff04, 0x0002);
 
+// VGN (0x391D) puts several protocols under one vendor id. These mice and receivers are the ones
+// its web driver (drive.vgnlab.com.cn, type "vgn-y2") reads with this protocol, byte for byte:
+// Dragonfly 3 MasterGT 391d:101d with receiver 391d:1a1a (issue #235), and its siblings.
+const VGN = 0x391d;
+const VGN_COMPX_PIDS = new Set([0x1005, 0x1a05, 0x101d, 0x1a1a, 0x1032, 0x102d, 0x1034, 0x1a2f, 0x1035, 0x1a30, 0x1036, 0x1a31, 0x1038, 0x1a32, 0x1039, 0x1a33]);
+
 function matches(logicalDevice) {
   if (compx.matches(logicalDevice)) return false;
+  if (logicalDevice.vendorId === VGN) return VGN_COMPX_PIDS.has(logicalDevice.productId) && hasCollection(logicalDevice, 0xff02, 0x0002);
   if (KNOWN_VENDOR_IDS.has(logicalDevice.vendorId)) return !!findChannel(logicalDevice, USAGE_PAGE_COMMAND);
   return COMPX_CHIP_VENDOR_IDS.has(logicalDevice.vendorId) && hasCompxLayout(logicalDevice);
 }
 
 // Turn one raw frame into a reading, or null if it isn't a usable battery frame.
+// Report 0x09 is the same answer from receivers that send it on another collection (see readSplit).
+// Redragon's own software reads its level as 0-10 when byte 5 (the data length) is 1 or byte 4 is
+// 0x0A, and bit 7 of the level as charging (OpenMouse-Project/mouse-protocol, Redragon M719 Pro).
 function parseFrame(arr) {
-  if (arr[0] !== 0x08 || arr[1] !== 0x04) return null;
-  const capacity = arr[6];
-  // firmware sends a zeroed "not ready yet" frame sometimes; keep waiting for a real one
+  if (arr[1] !== 0x04) return null;
+  if (arr[0] === 0x08) {
+    const capacity = arr[6];
+    // firmware sends a zeroed "not ready yet" frame sometimes; keep waiting for a real one
+    if (!(capacity > 0 && capacity <= 100)) return null;
+    return { capacity, charging: !!arr[7], voltageMv: (arr[8] << 8) | arr[9] };
+  }
+  if (arr[0] !== 0x09 || arr.length < 8) return null;
+  let capacity = arr[6] & 0x7f;
+  if ((arr[5] === 0x01 || arr[4] === 0x0a) && capacity <= 10) capacity *= 10;
   if (!(capacity > 0 && capacity <= 100)) return null;
-  return { capacity, charging: !!arr[7], voltageMv: (arr[8] << 8) | arr[9] };
+  return { capacity, charging: !!arr[7] || !!(arr[6] & 0x80) };
 }
 
 // The receiver's answer to the status request: true while it has the mouse, false when it
 // doesn't, null for any other frame. The checksum is checked as Linux does.
 function parseStatus(arr) {
-  if (arr.length < FRAME_LENGTH || arr[0] !== 0x08 || arr[1] !== 0x03 || arr[6] > 1) return null;
+  if (arr.length < FRAME_LENGTH || (arr[0] !== 0x08 && arr[0] !== 0x09) || arr[1] !== 0x03 || arr[6] > 1) return null;
   let sum = 0;
   for (let i = 0; i < FRAME_LENGTH - 1; i++) sum += arr[i];
   if (((0x55 - sum) & 0xff) !== arr[FRAME_LENGTH - 1]) return null;
@@ -76,9 +93,10 @@ async function readBattery(logicalDevice) {
   // reports either, passes to the next one. If none answers, the error names what each one said, so
   // a device report shows where it failed.
   const failures = [];
+  const answers = answerChannel(logicalDevice);
   for (const channel of channels) {
     try {
-      return await readFrom(channel);
+      return await readFrom(channel, channel === channels[0] ? answers : null);
     } catch (e) {
       if (!/cannot write|could not read/i.test(e.message)) throw e;
       failures.push({ channel, error: e });
@@ -99,12 +117,22 @@ const FEATURE_WAIT_MS = 150;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sameBytes = (a, b) => a.length >= b.length && b.every((x, i) => a[i] === x);
 
-async function readFrom(channel) {
+async function readFrom(channel, answers) {
+  if (answers && split.has(channel.path)) return readSplit(channel, answers);
   if (featureOnly.has(channel.path)) return readByFeature(channel);
   try {
     return await readByInput(channel);
   } catch (e) {
     if (!/could not read/i.test(e.message)) throw e;
+    if (answers) {
+      try {
+        const reading = await readSplit(channel, answers);
+        split.add(channel.path);
+        return reading;
+      } catch (splitError) {
+        if (splitError.message === 'mouse is off') throw splitError;
+      }
+    }
     featureOnly.add(channel.path);
     try {
       return await readByFeature(channel);
@@ -149,6 +177,42 @@ async function readByFeature(channel) {
     if (e.message !== 'mouse is off') featureOnly.delete(channel.path);
     throw e;
   }
+}
+
+// Redragon receivers (25a7:fa07 is the M913's, issue #92; VSG Aquila Fly 25a7:fa3f, issue #224)
+// take the request as feature report 8 on the command collection, but answer it as input report 9
+// on 0xFF01, a collection with only an input report (shown as "ff01:----"). So that one is opened
+// and emptied first, since Windows only keeps reports for an open handle, and the answer is read
+// there. Sources: OpenMouse-Project/mouse-protocol (Redragon M719 Pro 25a7:fa7e, checked on the
+// mouse; Pulsar on 25a7:fa7b/fa7c) and packerlschupfer/pulsar-mouse-linux.
+const split = new Set();
+const answerChannel = (logicalDevice) => logicalDevice.channels.find((c) => c.usagePage === 0xff01) || null;
+
+async function readSplit(channel, answers) {
+  const out = await session.acquire(channel.path);
+  const dev = await session.acquire(answers.path);
+  await session.readQueued(answers.path, dev);
+  const deadline = Date.now() + RESPONSE_TIMEOUT_MS;
+  let nextPoke = 0;
+  let offInARow = 0;
+  let connected = null;
+  while (Date.now() < deadline) {
+    if (Date.now() >= nextPoke) {
+      await session.sendFeatureReport(channel.path, out, STATUS_REQUEST);
+      if (connected !== false) await session.sendFeatureReport(channel.path, out, BATTERY_REQUEST);
+      nextPoke = Date.now() + REPOKE_MS;
+    }
+    const frame = await session.read(answers.path, dev, READ_SLICE_MS);
+    const reading = parseFrame(frame);
+    if (reading) return reading;
+    const status = parseStatus(frame);
+    if (status === true) { connected = true; offInARow = 0; }
+    else if (status === false) {
+      connected = false;
+      if (++offInARow >= OFF_ANSWERS) throw new Error('mouse is off');
+    }
+  }
+  throw new Error('timeout waiting for battery response');
 }
 
 async function readByInput(channel) {
