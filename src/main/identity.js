@@ -14,13 +14,13 @@ function identityOf(device) {
   // A device on a Lightspeed receiver shares the receiver's serial with its neighbours, so the
   // serial says nothing about which device it is.
   if (RECEIVER_CHILD.test(id)) return null;
-  const windows = /dev_([0-9a-f]{12})/.exec(id);
+  const windows = /dev_([0-9a-f]{12})/.exec(id) || /^ble:([0-9a-f]{12})$/.exec(id);
   if (windows) return `mac:${windows[1]}`;
   const serial = device.serialNumber === undefined ? id.split(':')[2] || '' : device.serialNumber.toLowerCase();
   return address(serial);
 }
 
-const isWindowsRoute = (id) => /^(bt|xinput):/.test(id);
+const isWindowsRoute = (id) => /^(bt|ble|xinput):/.test(id);
 
 // Ways to read a card, best first: a direct read beats what Windows last remembered.
 function routesOf(card) {
@@ -52,4 +52,21 @@ function planMerges(devices) {
   return plans;
 }
 
-module.exports = { identityOf, address, routesOf, planMerges };
+// A Lightspeed receiver's card from before its devices got cards of their own goes to the device it
+// was reading: the one in the lowest slot. [{ from: card, to: live device }]
+function planReceiverMoves(devices, live) {
+  const cards = Object.values(devices);
+  const moves = [];
+  for (const parent of live.filter((d) => d.expanded)) {
+    const card = devices[parent.id];
+    if (!card || card.driverId !== 'hidpp') continue;
+    const children = live.filter((d) => d.receiver && d.id.startsWith(`${parent.id}:`));
+    if (!children.length) continue;
+    const first = children.reduce((a, b) => (b.receiver.slot < a.receiver.slot ? b : a));
+    if (cards.some((c) => routesOf(c).some((r) => r.id === first.id))) continue; // it has a card already
+    moves.push({ from: card, to: first });
+  }
+  return moves;
+}
+
+module.exports = { identityOf, address, routesOf, planMerges, planReceiverMoves };

@@ -1,5 +1,5 @@
 const { driverById, detectDriver } = require('./hid/drivers');
-const { identityOf, routesOf, planMerges } = require('./identity');
+const { identityOf, routesOf, planMerges, planReceiverMoves } = require('./identity');
 const system = require('./system-batteries');
 const hidClient = require('./hid/hid-client');
 const monitor = require('./monitor');
@@ -218,11 +218,18 @@ async function liveRoutes(live) {
 // Keeps one card per physical device: joins cards that turn out to be the same device, and
 // attaches a new connection (plugging in the cable) to the card it belongs to.
 async function reconcile(live) {
+  let changed = false;
+  for (const { from, to } of planReceiverMoves(store.getDevices(), live)) {
+    // The receiver's serial says nothing about which device this is, so its identity stays behind.
+    store.moveDevice(from.id, to.id, { product: to.product, identity: null });
+    trend.delete(from.id);
+    onCardsChanged(from.id);
+    changed = true;
+  }
   const routes = await liveRoutes(live);
   for (const route of routes) {
     if (route.identity && store.getDevices()[route.id]) store.upsertDevice(route.id, { identity: route.identity });
   }
-  let changed = false;
   for (const { keep, drop } of planMerges(store.getDevices())) {
     for (const card of drop) {
       store.mergeDevices(keep.id, card.id);

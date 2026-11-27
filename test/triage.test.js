@@ -73,12 +73,11 @@ test('the device list counts people and votes, links one main report, and keeps 
     { hardware: '046D:0ACB', name: 'G435', number: 10, state: 'open', author: 'f', votes: 0, cantSupport: true },
     { hardware: '046D:0ACB', name: 'G435', number: 16, state: 'open', author: 'g', votes: 0 },
   ]);
-  const [top, , closed] = body.split('<details>');
+  const [top, once, closed] = body.split('<details>');
   const rows = (part) => part.split('\n').filter((l) => /^\| \d/.test(l));
-  assert.deepEqual(rows(top), [
-    '| 5 | Fuxi-H3 | `040B:0897` | #18 | ✅ |',
-    '| 1 | YICHIP 2.4G Receiver | `3151:1020` | #31 | |',
-  ]);
+  assert.deepEqual(rows(top), ['| 5 | Fuxi-H3 | `040B:0897` | #18 | ✅ |']);
+  assert.match(once, /Asked once, newest first \(1\)/);
+  assert.deepEqual(rows(once), ['| 1 | YICHIP 2.4G Receiver | `3151:1020` | #31 | |']);
   assert.deepEqual(rows(closed), ['| 2 | G435 | `046D:0ACB` | #10 | |', '| 1 | Panasonic SC-GNW10 | `04DA:23C7` | #59 | |']);
 });
 
@@ -98,7 +97,7 @@ test('devices people confirmed are listed under Works with, one row per device',
   ];
   const body = boardBody([], works);
   const section = body.split('<details>')[1];
-  assert.match(section, /Works with: devices people confirmed Battery Hub reads \(2\)/);
+  assert.match(section, /Works: people confirmed Battery Hub reads these \(2\)/);
   const rows = section.split('\n').filter((l) => /^\| \d/.test(l));
   assert.deepEqual(rows, ['| 2 | VXE R1 Pro | `3554:F58A` | #160 |', '| 1 | Compx receiver | `25A7:FA70` | #165 |']);
 });
@@ -116,7 +115,34 @@ test('a device someone confirmed works leaves the ranking and the closed list', 
       { hardware: '040B:0897', name: 'Fuxi-H3', number: 18, state: 'open', author: 'b', votes: 0 }],
     [{ hardware: '03F0:06BE', name: 'Cloud III S', number: 33, author: 'a' }],
   );
-  const [top, works, closed] = body.split('<details>');
-  assert.ok(!/06BE/.test(top) && !/06BE/.test(closed));
+  const [top, once, works] = body.split('<details>');
+  assert.ok(!/06BE/.test(top) && !/06BE/.test(once));
   assert.match(works, /\| 1 \| Cloud III S \| `03F0:06BE` \| #33 \|/);
+});
+
+test('devices Battery Hub reads now get their own section, and a new report of one points there', () => {
+  const body = boardBody([
+    { hardware: '1D57:FA60', name: 'Beken 2.4G Wireless Device', number: 20, state: 'open', author: 'a', votes: 3, supported: true },
+    { hardware: '040B:0897', name: 'Fuxi-H3', number: 18, state: 'open', author: 'b', votes: 1 },
+  ]);
+  const [top, supported] = body.split('<details>');
+  assert.ok(!/FA60/.test(top));
+  assert.match(supported, /Supported now: update Battery Hub and tell us if yours works \(1\)/);
+  assert.ok(supported.includes('| 4 | Beken 2.4G Wireless Device | `1D57:FA60` | #20 | |'));
+  const report = parseReport({ title: '[Device] x', body: form({ ids: 'VID_1D57 / PID_FA60' }) });
+  const action = decide(report, [{ hardware: '1D57:FA60', number: 20, state: 'open', supported: true }], 'v2.0.7');
+  assert.equal(action.close, true);
+  assert.match(action.comment, /already reads this device .*#20/);
+});
+
+test('device names are cleaned up for the list', () => {
+  const { cleanName } = require('../.github/scripts/triage');
+  assert.equal(cleanName('(Стандартные системные устройства) 2.4G Wireless Receiver'), '2.4G Wireless Receiver');
+  assert.equal(cleanName('(标准系统设备) 2.4G Mouse'), '2.4G Mouse');
+  assert.equal(cleanName('MCHOSE MCHOSE K99 V3 2.4G'), 'MCHOSE K99 V3 2.4G');
+  assert.equal(cleanName('XiiSound Technology Corporation Fuxi-H3'), 'XiiSound Fuxi-H3');
+  assert.equal(cleanName('HP, Inc HyperX Cloud II Wireless'), 'HyperX Cloud II Wireless');
+  assert.equal(cleanName('Havit Fuxi-H6 (headset), dongle USB 2.4G. Strings USB: fabri'), 'Havit Fuxi-H6');
+  assert.equal(cleanName('ATK̄Љ礼p  Wireless mouse 8k dongle-L0'), 'ATK Wireless mouse 8k dongle-L0');
+  assert.equal(cleanName(''), 'Unknown device');
 });

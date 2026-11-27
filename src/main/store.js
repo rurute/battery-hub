@@ -81,6 +81,15 @@ function mergeDevices(keepId, dropId) {
   store.set('devices', devices);
 }
 
+// Gives a card another id, keeping everything set on it.
+function moveDevice(fromId, toId, patch) {
+  const devices = store.get('devices');
+  if (!devices[fromId] || devices[toId]) return;
+  devices[toId] = { ...devices[fromId], ...patch, id: toId };
+  delete devices[fromId];
+  store.set('devices', devices);
+}
+
 // Persist a user-chosen card order as a per-device index.
 function reorderDevices(orderedIds) {
   const devices = store.get('devices');
@@ -107,7 +116,7 @@ function getPollIntervalSec() {
 }
 
 module.exports = {
-  getDevices, upsertDevice, removeDevice, mergeDevices, reorderDevices,
+  getDevices, upsertDevice, removeDevice, mergeDevices, moveDevice, reorderDevices,
   getSettings, getSetting, setSettings,
   getPollIntervalSec,
 };

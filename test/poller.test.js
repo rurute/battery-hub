@@ -7,6 +7,10 @@ const devices = {};
 const store = {
   getDevices: () => devices,
   upsertDevice: (id, patch) => { devices[id] = { ...(devices[id] || {}), ...patch, id }; return devices[id]; },
+  moveDevice: (fromId, toId, patch) => {
+    devices[toId] = { ...devices[fromId], ...patch, id: toId };
+    delete devices[fromId];
+  },
   getPollIntervalSec: () => 60,
 };
 let finishRead;
@@ -32,6 +36,8 @@ Module._load = function (request, ...rest) {
 };
 const poller = require('../src/main/poller');
 Module._load = load;
+
+const { identityOf } = require('../src/main/identity');
 
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
 const addMouse = () => { devices.mouse = { id: 'mouse', driverId: 'generic', product: 'Mouse' }; };
@@ -284,5 +290,40 @@ test('two cards on one receiver keep their own settings when the devices swap sl
     hidClient.readBattery = readBattery;
     delete devices[kb];
     delete devices[ms];
+  }
+});
+
+test("a receiver's old card becomes the card of the device it was reading, keeping its settings", async () => {
+  const serial = '0123456789ab';
+  const parentId = `1133:50503:${serial}`;
+  const kb = `${parentId}:408e`;
+  const now = Date.now();
+  devices[parentId] = {
+    id: parentId, driverId: 'hidpp', product: 'USB Receiver', identity: `mac:${serial}`, customName: 'Desk keyboard', customIcon: '⌨️',
+    alertThreshold: 15, order: 3, hidden: false, history: [{ t: now - 60000, c: 50, ch: 0 }],
+  };
+  const parent = { id: parentId, serialNumber: serial, expanded: true, channels: [] };
+  const child = (id, wpid, slot, product) => ({ id, serialNumber: serial, product, channels: [], receiver: { slot, wpid, kind: 1 } });
+  const { enumerate, readBattery } = hidClient;
+  hidClient.enumerate = async () => [parent, child(`${parentId}:409f`, 0x409f, 2, 'G502 X LS'), child(kb, 0x408e, 1, 'G913 TKL')];
+  hidClient.readBattery = async () => ({ capacity: 95, charging: false });
+  try {
+    await poller.pollOnce(() => {}, { force: true });
+    assert.equal(devices[parentId], undefined);
+    const card = devices[kb];
+    assert.ok(card, 'the keyboard has the card');
+    assert.equal(card.product, 'G913 TKL');
+    assert.equal(identityOf(card), null, 'the receiver serial is not carried over as the device identity');
+    for (const [key, value] of [['customName', 'Desk keyboard'], ['customIcon', '⌨️'], ['alertThreshold', 15], ['order', 3], ['hidden', false], ['driverId', 'hidpp']]) {
+      assert.deepEqual(card[key], value, key);
+    }
+    assert.equal(card.history[0].c, 50);
+    assert.equal(card.lastReading.capacity, 95);
+    assert.equal(devices[`${parentId}:409f`], undefined, 'the other device is left for Add device');
+  } finally {
+    hidClient.enumerate = enumerate;
+    hidClient.readBattery = readBattery;
+    delete devices[kb];
+    delete devices[parentId];
   }
 });

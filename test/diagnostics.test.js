@@ -503,3 +503,19 @@ test("a keyboard receiver's broadcast on an odd standard page is kept, its typin
   assert.match(scan, /^000a:0000 report 3, seen 12x: 03e540014d$/m);
   assert.ok(!/0100001304/.test(scan));
 });
+
+test('the latest version falls back to the releases page when the API refuses (rate limit)', async () => {
+  const { fetchLatestVersion } = require('../src/main/diagnostics');
+  const calls = [];
+  const fetcher = async (url, opts) => {
+    calls.push([url, opts.method || 'GET']);
+    if (url.includes('api.github.com')) return { ok: false, status: 403 };
+    return { ok: true, url: 'https://github.com/battery-hub/battery-hub/releases/tag/v2.0.7' };
+  };
+  assert.equal(await fetchLatestVersion(fetcher), '2.0.7');
+  assert.equal(calls[1][1], 'HEAD');
+  const api = async () => ({ ok: true, json: async () => ({ tag_name: 'v2.0.8' }) });
+  assert.equal(await fetchLatestVersion(api), '2.0.8');
+  const down = async () => { throw new Error('offline'); };
+  await assert.rejects(fetchLatestVersion(down), /offline/);
+});

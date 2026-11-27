@@ -7,6 +7,12 @@ const fs = require('fs');
 const path = require('path');
 
 const PROGRAM = path.join(__dirname, 'system-batteries.exe');
+// Bluetooth LE devices whose level Windows doesn't show, read from their Battery Service
+// (batteries/BleBatteries.cs). Slower and it wakes the radio, so it runs less often.
+const BLE_PROGRAM = path.join(__dirname, 'ble-batteries.exe');
+const BLE_EVERY_MS = 5 * 60 * 1000;
+const BLE_TIMEOUT_MS = 60000;
+const BLE_SCAN_WAIT_MS = 8000;
 const SCRIPT = path.join(__dirname, 'system-batteries.ps1');
 const ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT];
 
@@ -20,6 +26,20 @@ const WATCH_EVERY_S = 10; // cheap once running: it asks the device manager dire
 
 let watcher = null;
 let latest = new Map(); // id -> { id, name, kind, capacity, connected }
+let ble = new Map();    // the same, from the Bluetooth LE reader
+let bleTimer = null;
+
+function readBle() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32' || !fs.existsSync(BLE_PROGRAM)) { resolve([]); return; }
+    execFile(BLE_PROGRAM, [], { windowsHide: true, timeout: BLE_TIMEOUT_MS, encoding: 'utf8' }, (err, stdout) => {
+      const list = err ? null : parseScan(String(stdout).trim().split(/\r?\n/).pop());
+      // A device that didn't answer this time (asleep) keeps its last level until it does.
+      if (list) for (const d of list) ble.set(d.id, d);
+      resolve(list || []);
+    });
+  });
+}
 let seenAt = 0;
 
 function parseScan(line) {
@@ -49,9 +69,12 @@ function runScript() {
 // One fresh look, for the Add device list.
 async function scan() {
   if (process.platform !== 'win32') return [];
-  const { list } = await runScript();
+  // The Bluetooth LE read can take a while per sleeping device, so the list doesn't wait for it long:
+  // what it hasn't read yet shows up on the next look.
+  const wait = new Promise((resolve) => setTimeout(resolve, BLE_SCAN_WAIT_MS));
+  const [{ list }] = await Promise.all([runScript(), Promise.race([readBle(), wait])]);
   if (list) remember(list);
-  return list || [];
+  return (list || []).concat(Array.from(ble.values()));
 }
 
 // For the support check: can PowerShell run the script at all?
@@ -76,6 +99,10 @@ function startWatching() {
       if (list) remember(list);
     }
   });
+  if (!bleTimer) {
+    readBle();
+    bleTimer = setInterval(readBle, BLE_EVERY_MS);
+  }
   watcher.on('error', () => { watcher = null; });
   watcher.on('exit', () => { watcher = null; });
 }
@@ -83,11 +110,13 @@ function startWatching() {
 function stopWatching() {
   if (watcher) watcher.kill();
   watcher = null;
+  if (bleTimer) clearInterval(bleTimer);
+  bleTimer = null;
 }
 
-const get = (id) => latest.get(id) || null;
-const list = () => Array.from(latest.values());
+const get = (id) => latest.get(id) || ble.get(id) || null;
+const list = () => Array.from(latest.values()).concat(Array.from(ble.values()));
 const hasScanned = () => seenAt > 0;
-const isSystemId = (id) => /^(bt|xinput):/.test(id);
+const isSystemId = (id) => /^(bt|ble|xinput):/.test(id);
 
 module.exports = { scan, selfTest, startWatching, stopWatching, get, list, hasScanned, isSystemId, parseScan };

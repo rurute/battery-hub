@@ -333,3 +333,35 @@ test('kysona: a card saved for the Compx keyboard receiver is read with the Comp
   assert.deepEqual(await kysona.readBattery(receiver), { capacity: 71, charging: false });
   assert.ok(dev.sent.includes(0x05) && dev.sent.includes(0x4a), 'session and battery requests in report 0x13 format');
 });
+
+// Redragon receivers: the request goes out as feature report 8 on 0xFF02, the answer comes back as
+// input report 9 on 0xFF01 (issues #92, #224).
+function redragon() {
+  const command = mouse();
+  command.dev.reads = [new Error('could not read data from device')];
+  const answers = mouse();
+  const logical = { channels: [command.logical.channels[0], { path: answers.path, usagePage: 0xff01, usage: undefined }] };
+  return { command: command.dev, answers: answers.dev, logical };
+}
+const frame9 = (bytes) => { const f = bytes.concat(new Array(17 - bytes.length).fill(0)); f[16] = (0x55 - f.slice(0, 16).reduce((a, b) => a + b, 0)) & 0xff; return f; };
+
+test('kysona: a Redragon receiver is asked on 0xFF02 and answers with report 9 on 0xFF01, level 0-10', async () => {
+  const { command, answers, logical } = redragon();
+  answers.reads = [[], frame9([9, 3, 0, 0, 0, 1, 1]), frame9([9, 4, 0, 0, 0x0a, 1, 8, 0])];
+  const reading = await kysona.readBattery(logical);
+  assert.deepEqual([reading.capacity, reading.charging], [80, false]);
+  assert.deepEqual(command.featuresSent.slice(0, 2), [0x03, 0x04]);
+});
+
+test('kysona: report 9 with a percent level, and charging', () => {
+  assert.deepEqual(kysona.parseFrame(frame9([9, 4, 0, 0, 0, 2, 64, 1])), { capacity: 64, charging: true });
+  assert.deepEqual(kysona.parseFrame(frame9([9, 4, 0, 0, 0, 1, 0x85, 0])), { capacity: 50, charging: true });
+  assert.equal(kysona.parseFrame(frame9([9, 4, 0, 0, 0, 1, 0, 0])), null);
+  assert.equal(kysona.parseFrame(frame9([9, 0x0a, 0, 0, 0, 1, 5, 0])), null);
+});
+
+test('kysona: a Redragon receiver saying twice it has no mouse means the mouse is off', async () => {
+  const { answers, logical } = redragon();
+  answers.reads = [[], frame9([9, 3, 0, 0, 0, 1, 0]), frame9([9, 3, 0, 0, 0, 1, 0])];
+  await assert.rejects(kysona.readBattery(logical), /^Error: mouse is off$/);
+});

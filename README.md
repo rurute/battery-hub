@@ -50,7 +50,7 @@ Windows SmartScreen shows a **"Windows protected your PC"** prompt because the i
 Every release is built and published by [GitHub Actions](.github/workflows/release.yml) directly from a tagged commit — no binaries are uploaded by hand — and each one ships a `SHA256SUMS.txt`. To confirm your download matches, run:
 
 ```powershell
-(Get-FileHash "Battery-Hub-Installer-2.0.7.exe" -Algorithm SHA256).Hash
+(Get-FileHash "Battery-Hub-Installer-2.0.8.exe" -Algorithm SHA256).Hash
 ```
 
 and compare the result with the checksum in that release's `SHA256SUMS.txt`. Pasting the same hash into [VirusTotal](https://www.virustotal.com/gui/home/search) will show any scan results for the exact file.
@@ -97,18 +97,31 @@ Battery Hub reads these directly. Anything else can usually be added with **Set 
 | Xbox | Wireless controllers |
 | PlayStation | DualSense, DualSense Edge, DualShock 4 (USB and Bluetooth) |
 | Sony | INZONE Buds (USB dongle) |
+| Nintendo | Switch Pro Controller and clones, Joy-Con (Bluetooth) |
 | Logitech | Mice and keyboards using HID++ 2.0 (Bolt, Unifying, Lightspeed, including the newest receiver of the PRO X3 SUPERSTRIKE); G PRO, G533, G535, G633, G733, G933, G935 headsets |
 | Razer | 81 wireless mice and keyboards; BlackShark V3 and V3 Pro headsets |
 | SteelSeries | Arctis 1, 7, 7+, 9, Nova 3P, Nova 5, Nova 7, Nova Pro Wireless headsets; Aerox, Prime and Rival 3 Wireless mice |
 | HyperX | Cloud Alpha Wireless, Cloud Flight, Cloud Flight S, Cloud II Wireless, Cloud II Core Wireless, Cloud III Wireless, Cloud III S Wireless, Cloud Stinger 2 Wireless |
-| Corsair | Void, Void Wireless v2, HS80 MAX, Virtuoso, Virtuoso SE, XT and MAX headsets; Slipstream receiver |
+| Corsair | Void, Void Wireless v2 (also on its cable), HS80 MAX, Virtuoso, Virtuoso SE, XT and MAX headsets; Slipstream receiver |
 | Audeze | Maxwell, Maxwell 2 |
 | ELECOM | BlueLED Mouse over Bluetooth (056e:00e5, listed as "Broadcom Bluetooth Wireless Mouse") |
 | Astro | A50 Gen 4, A50 Gen 5 |
-| MCHOSE | V9 Turbo+, V9 PRO, X9 headsets; A7 V2 Ultra, A5 Ultra, K7 Ultra, A7 Ultra, G3 A mice; G75 V2, G87 V2, K87S, K99 V3 keyboards |
+| MCHOSE | V9 Turbo+, V9 PRO, V9 Pro 2, X9 headsets; A7 V2 Ultra, A7 V2 Pro, A5 Ultra, K7 Ultra, A7 Ultra, G3 A mice; G75 V2, G87 V2, K87S, K99 V3 keyboards |
 | VXE, ATK, MADLIONS | Dragonfly R1 Pro, NordicMouse and other mice on Compx receivers; ATK NearLink and BitMouse receivers, X1 NearLink; ATK 8K Nano and 1K/8K dongles |
-| Glorious, LAMZU | Model O, O-, D, D- Wireless; Maya X and other LAMZU mice |
+| Glorious, LAMZU | Model O, O-, D, D- Wireless; Maya X, Atlantis OG and Mini, TACHI, INCA, PARO, THORN and other LAMZU mice |
 | Beken/Xenta 2.4G receiver | Attack Shark and other mice on 1d57:fa60 and fa55 |
+| ASUS | ROG Claymore II keyboard; ROG Gladius III AimPoint and mice on the ROG OMNI receiver |
+| MSI | VERSA 300 Elite Wireless |
+| Bloody | R73 Pro and other Bloody wireless mice |
+| Waizowl | OGM 8K |
+| Darmoshark | M3 and other Darmoshark mice and receivers |
+| AULA, EWEADN | Keyboards on their SONiX 2.4G receiver |
+| 1EA7 2.4G receiver | Generic 2.4G mice on 1ea7:0064 and 0066 |
+| Rapoo | VT7 and VT9 Pro / VT3 MAX mice (24ae:1413, 1417) |
+| YICHIP 2.4G receiver | AJAZZ AJ159 APEX, AJ179 PRO, Lingbao M5 Pro, Attack Shark R2 and other mice and keyboards on YICHIP receivers |
+| BY Tech | PIAO 8K, EWEADN S9 and other BY Tech mice |
+| Akko, Telink, Wobkey | Mice on the Akko 8K receiver, and Telink mice and Wobkey keyboards on the same platform |
+| VGN | Dragonfly 3 MasterGT and other VGN mice |
 | Keychron, SKN | Mice on the Ultra-Link 8K receiver |
 | YJX-chip 2.4G receiver | AJAZZ, XCTECH and other mice on YJX receivers (the same platform as MCHOSE G-series mice) |
 | Compx 2.4G receiver | AULA F87 Pro and F99 Pro, Lingbao K98, MCHOSE G75 keyboards |

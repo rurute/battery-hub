@@ -13,6 +13,17 @@ const OFFLINE = { offline: true };
 const STATUS_REQUEST = [0x00, 0xb0];
 const clampPercent = (v) => Math.min(100, Math.max(0, v));
 
+// ASUS ROG mice, as G-Helper reads them (AsusMouse.cs): 12 07 asks for the battery. The reply is
+// 12 07 .. .. <level> .. .. .. .. <charging>, one byte later behind a report id; FF AA = asleep.
+function asusMouse(f) {
+  const o = f[0] === 0x03 ? 1 : 0;
+  if (f[o] === 0xff && f[o + 1] === 0xaa) return OFFLINE; // asleep, or nothing paired to the receiver
+  if (f.length < 10 + o || f[o] !== 0x12 || f[o + 1] !== 0x07) return null;
+  const charging = f[o + 9] !== 0;
+  if (f[o + 4] > 100 || (f[o + 4] === 0 && !charging)) return OFFLINE;
+  return { capacity: f[o + 4], charging };
+}
+
 // ---- SteelSeries Arctis ----
 const STEELSERIES = 0x1038;
 const NOVA_CHANNEL = { usagePage: 0xffc0, usage: 0x01, interface: 3 };
@@ -289,7 +300,32 @@ const DEVICES = [
     channel: { usagePage: 0xff90, usage: 0x01 },
     steps: [{
       request: pad([0x55, 0x65, 0x01], 64),
-      parse: (f) => (f.length >= 4 && f[0] === 0x55 && f[1] === 0x65 && f[3] === 0x02 ? { capacity: clampPercent(f[2]) } : null),
+      // Status, as MCHOSE's M HUB reads it: 2 on battery, 3 charging, 4 full, 26 asleep.
+      parse(f) {
+        if (f.length < 4 || f[0] !== 0x55 || f[1] !== 0x65) return null;
+        if (f[3] === 26) return OFFLINE;
+        if (f[3] < 2 || f[3] > 4) return null;
+        return { capacity: clampPercent(f[2]), charging: f[3] === 3 };
+      },
+    }],
+  },
+  {
+    // MCHOSE's "MC" headset protocol, as its M HUB web driver (buildMCFrame, createReadBatteryCommand)
+    // and fuyue521/Wireless-Device-Battery-Monitor-CN (tested on a V9 Pro 2) send it (issue #229):
+    //   55 AA 01 00 01 00 01 0B         read battery: start, version, flags, length, type 00 01, 0x0B
+    //   55 AA 01 .. .. 00 01 0B <on> <level>   <on> 0 = asleep; level bit 7 = charging
+    name: 'MCHOSE V9 Pro 2', kind: 'headset', vendorId: 0x3837, productIds: [0x6011],
+    channel: { usagePage: 0xff07, usage: 0x0222 },
+    steps: [{
+      request: pad([0x55, 0xaa, 0x01, 0x00, 0x01, 0x00, 0x01, 0x0b, 0x00], 64),
+      parse(f) {
+        if (f.length < 10 || f[0] !== 0x55 || f[1] !== 0xaa || f[5] !== 0x00) return null;
+        const reply = f[6] === 0x01 && f[7] === 0x0b;
+        const pushed = f[6] === 0x04 && f[7] === 0x22;
+        if (!reply && !pushed) return null;
+        if (f[8] === 0) return OFFLINE;
+        return { capacity: clampPercent(f[9] & 0x7f), charging: !!(f[9] & 0x80) };
+      },
     }],
   },
   {
@@ -325,6 +361,100 @@ const DEVICES = [
       request: pad([0x00, 0x55, 0x04, 0x00, 0x38, 0x38, 0x00, 0x00, 0x00], 65),
       parse: (f) => (f.length < 41 || f[0] !== 0xaa || f[1] !== 0x04 || f[5] !== 0 || f[6] !== 0 ? null
         : (f[40] & 0x7f) === 0 ? null : { capacity: clampPercent(f[40] & 0x7f), charging: !!(f[40] & 0x80) }),
+    }],
+  },
+  {
+    // ASUS ROG Claymore II (issue #212), as G-Helper reads it (seerge/g-helper, ClaymoreII.cs; an owner's
+    // log in its issue #5482): unnumbered output 12 01 on interface 1 (0xFF00/0x0001). The reply,
+    // without the report id, is 12 01 .. .. .. <percent> .. .. <charging>; FF AA means asleep.
+    // Only 12 01 is sent: G-Helper's other commands on this keyboard change its settings.
+    name: 'ASUS ROG Claymore II', kind: 'keyboard', vendorId: 0x0b05, productIds: [0x196b],
+    channel: { usagePage: 0xff00, usage: 0x01 },
+    steps: [{
+      request: pad([0x00, 0x12, 0x01], 65),
+      parse(f) {
+        if ((f[0] === 0xff && f[1] === 0xaa) || (f[0] === 0x12 && f[5] === 0xff && f[6] === 0xaa)) return OFFLINE;
+        if (f.length < 9 || f[0] !== 0x12 || f[1] !== 0x01) return null;
+        if (f[5] < 1 || f[5] > 100) return null;
+        return { capacity: f[5], charging: f[8] === 1 };
+      },
+    }],
+  },
+  {
+    // 2.4G mice on the 1EA7 receiver (issue #48), as TaskbarVitals reads them (raigor.cpp, checked on
+    // a 1ea7:0066 dongle; 0064 is in its list): report B5 on 0xFFB5/0x0001, 8 bytes. B5 05 makes the
+    // dongle send its registers as B5 05 <address> 04 ..; the one at address 0x94 has the percent in
+    // byte 6. The heartbeat it sends on its own, B5 67 .. .. .. .. <state> <percent>, has it too.
+    name: '2.4G mouse (1EA7 receiver)', kind: 'mouse', vendorId: 0x1ea7, productIds: [0x0064, 0x0066],
+    channel: { usagePage: 0xffb5, usage: 0x01 },
+    steps: [{
+      request: [0xb5, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+      parse(f) {
+        if (f.length < 8 || f[0] !== 0xb5) return null;
+        const level = f[1] === 0x05 && f[2] === 0x94 ? f[6] : f[1] === 0x67 ? f[7] : null;
+        return level >= 1 && level <= 100 ? { capacity: level } : null;
+      },
+    }],
+  },
+  {
+    // ASUS ROG mice (see asusMouse): the Gladius III AimPoint (issue #118) takes 12 07 unnumbered,
+    // the ROG OMNI receiver (issue #86) as report 3.
+    name: 'ASUS ROG Gladius III AimPoint', kind: 'mouse', vendorId: 0x0b05, productIds: [0x1a72],
+    channel: { usagePage: 0xff01 },
+    steps: [{ request: pad([0x00, 0x12, 0x07], 65), parse: asusMouse }],
+  },
+  {
+    name: 'ASUS ROG OMNI receiver', kind: 'mouse', vendorId: 0x0b05, productIds: [0x1ace],
+    channel: { usagePage: 0xff01 },
+    steps: [{ request: pad([0x03, 0x12, 0x07], 64), parse: asusMouse }],
+  },
+  {
+    // MSI VERSA 300 Elite Wireless (issue #154): the battery query MSI's GM31 answers (0F 20) on
+    // 0xFF0D/0x00B0. Reply 0F 20 ..., byte 14: bit 7 charging, the rest the percent. MSI Center's
+    // 41 80 is never sent.
+    name: 'MSI VERSA 300 Elite Wireless', kind: 'mouse', vendorId: 0x0db0, productIds: [0x9e22],
+    channel: { usagePage: 0xff0d, usage: 0xb0 },
+    steps: [{
+      request: pad([0x00, 0x0f, 0x20], 65),
+      parse(f) {
+        if (f.length < 15 || f[0] !== 0x0f || f[1] !== 0x20 || (f[14] & 0x7f) > 100) return null;
+        if (f[14] === 0) return OFFLINE; // level 0 and not charging: asleep or off
+        return { capacity: f[14] & 0x7f, charging: !!(f[14] & 0x80) };
+      },
+    }],
+  },
+  {
+    // Waizowl OGM 8K receiver (issue #169): the Nordic framing of Darmoshark's N5, whose frames all sum
+    // to 0xA1; the frame the scan caught, 1f 00 81 01, does too. 41 00 81 01 asks for the base info;
+    // the level is at byte 6, or at 11 when bytes 6-7 are 15 19.
+    name: 'Waizowl OGM 8K', kind: 'mouse', vendorId: 0x1915, productIds: [0x0728],
+    channel: { usagePage: 0xff0a, usage: 0x01 },
+    steps: [{
+      request: [0,65,0,129,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,222],
+      parse(f) {
+        if (f.length < 64 || (f[0] & 0x3f) !== 0x01 || f[3] !== 0x01) return null;
+        if ((f.slice(0, 64).reduce((a, b) => a + b, 0) & 0xff) !== 0xa1) return null;
+        const level = f[6] === 0x15 && f[7] === 0x19 ? f[11] : f[6];
+        return level >= 1 && level <= 100 ? { capacity: level } : null;
+      },
+    }],
+  },
+  {
+    // Corsair Void Wireless v2 on its cable (1b1c:2a09, issue #106): wired Bragi devices answer as
+    // the receiver target (OpenLinkHub, hs80rgbWU).
+    name: 'Corsair Void Wireless v2 (cable)', kind: 'headset', vendorId: 0x1b1c, productIds: [0x2a09],
+    channel: { usagePage: 0xff42 },
+    steps: [bragiStep([0x00], BRAGI_RECEIVER, 0x0f, bragiBattery)],
+  },
+  {
+    // AULA and EWEADN keyboards on their SONiX 2.4G receiver 0c45:fefe (issues #109, #160 asked on the
+    // cable, which has no battery command), as AulaToolkit and vigil-watt read them (checked on an X87):
+    // output report 0, 20 01 and a last byte that sums the 31 before it; reply 20 01 00 <percent>.
+    name: 'AULA, EWEADN keyboards (SONiX 2.4G receiver)', kind: 'keyboard', vendorId: 0x0c45, productIds: [0xfefe],
+    channel: { usagePage: 0xff60, usage: 0x61 },
+    steps: [{
+      request: [0,32,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,33],
+      parse: (f) => (f.length >= 4 && f[0] === 0x20 && f[1] === 0x01 && f[2] === 0x00 && f[3] >= 1 && f[3] <= 100 ? { capacity: f[3] } : null),
     }],
   },
   {

@@ -149,7 +149,7 @@ function vendorProduct(id) {
 }
 
 // Windows shows Bluetooth devices under the name the user gave them.
-const reportName = (device) => (String(device.id).startsWith('bt:') ? 'Bluetooth device' : device.product || 'Unknown');
+const reportName = (device) => (/^(bt|ble):/.test(String(device.id)) ? 'Bluetooth device' : device.product || 'Unknown');
 
 const ASLEEP = /^(not connected|waiting\b)|\bis off$/i;
 const TURNED_OFF_IN_SETTINGS = /in Settings$/;
@@ -290,7 +290,7 @@ function requestUrl(report, limit = URL_LIMIT) {
 
 function deviceFacts(request, live) {
   const channels = live ? live.channels : [];
-  const bluetooth = String(request.id).startsWith('bt:') || channels.some((c) => BLUETOOTH_PATH.test(c.path || ''));
+  const bluetooth = /^(bt|ble):/.test(String(request.id)) || channels.some((c) => BLUETOOTH_PATH.test(c.path || ''));
   return {
     product: reportName(request),
     manufacturer: request.manufacturer || '',
@@ -446,10 +446,23 @@ function worksReport(deps, request, live) {
   };
 }
 
+// GitHub's API allows 60 requests an hour per network without signing in, which a shared or busy
+// network can use up. The releases page has no such limit: it redirects to /releases/tag/vX.Y.Z,
+// so the version is read from where it lands.
+const LATEST_RELEASE_PAGE = `https://github.com/${REPO}/releases/latest`;
+
 async function fetchLatestVersion(fetcher) {
-  const response = await fetcher(LATEST_RELEASE, { headers: { 'User-Agent': 'Battery-Hub', Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS) });
-  if (!response.ok) throw new Error(`status ${response.status}`);
-  return (await response.json()).tag_name.replace(/^v/, '');
+  const options = () => ({ headers: { 'User-Agent': 'Battery-Hub', Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS) });
+  try {
+    const response = await fetcher(LATEST_RELEASE, options());
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    return (await response.json()).tag_name.replace(/^v/, '');
+  } catch (apiError) {
+    const page = await fetcher(LATEST_RELEASE_PAGE, { ...options(), method: 'HEAD' }).catch(() => null);
+    const tag = page && page.ok && /\/releases\/tag\/v?([^/?#]+)$/.exec(page.url || '');
+    if (tag) return decodeURIComponent(tag[1]);
+    throw apiError;
+  }
 }
 
 // deps: { root, packaged, version, userData, logFile, fetcher, enumerate, windowsSelfTest, devices }
@@ -473,4 +486,4 @@ async function runChecks(deps) {
   return { checks: shown, verdict, report, ...requestUrl(report) };
 }
 
-module.exports = { runChecks, deviceReport, worksReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage, splitForcedCloses, checkCrashes };
+module.exports = { fetchLatestVersion, runChecks, deviceReport, worksReport, isExpectedFailure, verdictOf, formatReport, requestUrl, sanitize, isNewer, checkDevice, checkPython, readLog, checkPackage, splitForcedCloses, checkCrashes };

@@ -354,7 +354,7 @@ test('Logitech: a device that stops answering reads as off on the same poll, an 
 });
 
 // The G913 TKL (slot 1, 0x1001 at index 7) and G502 X (slot 2, 0x1004 at index 6) on one receiver,
-// with the readings recorded in fork Issue #2: 0x102d = 4141 mV, and 0x51 = 81%.
+// with the readings recorded while investigating #210: 0x102d = 4141 mV, and 0x51 = 81%.
 function twoDeviceReceiver(calls, { asleep = [] } = {}) {
   const features = { 1: { 0x1001: 7 }, 2: { 0x1004: 6 } };
   const readings = { 1: [0x10, 0x2d, 0x00], 2: [0x51, 0x08, 0x00, 0x00] };
@@ -785,4 +785,89 @@ test('Razer BlackShark V3 asks class 0x21 with the XOR byte and reads byte 13', 
   assert.equal(step.parse(frame([0x02, 0x02, 0x60, 0, 0, 0, 0x0a, 0, 0, 0x80, 0x60, 0x01, 0x06, 0x08])), null);
   const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
   assert.equal(detectDriver({ vendorId: 0x1532, productId: 0x0577, channels: [ch(0x0c, 1), ch(0xff13, 1), ch(0x0b, 5), ch(0xff14, 1)] }).id, 'tabled');
+});
+
+test('MCHOSE V9 Pro 2 speaks the MC protocol, and the X9 reads charging, full and asleep', () => {
+  const v9p2 = entry(0x3837, 0x6011);
+  assert.deepEqual(v9p2.channel, { usagePage: 0xff07, usage: 0x0222 });
+  const step = v9p2.steps[0];
+  assert.deepEqual(step.request.slice(0, 9), [0x55, 0xaa, 0x01, 0x00, 0x01, 0x00, 0x01, 0x0b, 0x00]);
+  assert.equal(step.request.length, 64);
+  assert.deepEqual(step.parse(frame([0x55, 0xaa, 0x01, 0x00, 0x03, 0x00, 0x01, 0x0b, 0x01, 80])), { capacity: 80, charging: false });
+  assert.deepEqual(step.parse(frame([0x55, 0xaa, 0x01, 0x00, 0x03, 0x00, 0x04, 0x22, 0x01, 0x80 | 45])), { capacity: 45, charging: true });
+  assert.equal(step.parse(frame([0x55, 0xaa, 0x01, 0x00, 0x03, 0x00, 0x01, 0x0b, 0x00, 0])).offline, true);
+  assert.equal(step.parse(frame([0x55, 0xaa, 0x01, 0x00, 0x03, 0x00, 0x01, 0x0c, 0x01, 50])), null);
+  const x9 = entry(0x3837, 0x6045).steps[0];
+  assert.deepEqual(x9.parse(frame([0x55, 0x65, 0x32, 0x03])), { capacity: 50, charging: true });
+  assert.deepEqual(x9.parse(frame([0x55, 0x65, 0x64, 0x04])), { capacity: 100, charging: false });
+  assert.equal(x9.parse(frame([0x55, 0x65, 0x32, 26])).offline, true);
+  assert.equal(x9.parse(frame([0x55, 0x65, 0x32, 0x05])), null);
+});
+
+test('the MCHOSE A7 V2 Pro receiver (3837:100a) is read like the A7 V2 Ultra', () => {
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  const device = { vendorId: 0x3837, productId: 0x100a, channels: [ch(1, 2), ch(1, 6), ch(0xff0b, 0x104), ch(0xff01, 1), ch(0x0c, 1)] };
+  assert.equal(detectDriver(device).id, 'mchose-mouse');
+});
+
+test('Akko 8K receivers and others with the 0xFF1C/0x0092 collection ask with report 4, command 0x1A', () => {
+  const akko = require('../src/main/hid/drivers/akko');
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  assert.equal(detectDriver({ vendorId: 0x38ee, productId: 0x0024, channels: [ch(1, 2), ch(0xff1c, 0x92), ch(0xff01, 1)] }).id, 'akko');
+  assert.deepEqual(akko.REQUEST.slice(0, 6), [0x04, 0x00, 0x00, 0x1a, 0x06, 0x00]);
+  assert.equal(akko.REQUEST.length, 8);
+  assert.deepEqual(akko.parseReply([0x04, 0x1c, 0x00, 0x1a, 0x02, 0, 0, 0, 0x5d, 0]), { capacity: 93, charging: false });
+  assert.deepEqual(akko.parseReply([0x04, 0x1c, 0x00, 0x1a, 0x02, 0, 0, 0, 60, 1]), { capacity: 60, charging: true });
+  assert.equal(akko.parseReply([0x04, 0x1c, 0x00, 0x1a, 0x02, 0, 0, 0, 0, 0]).offline, true);
+  assert.equal(akko.parseReply([0x04, 0x1c, 0x00, 0x1b, 0x02, 0, 0, 0, 50, 0]), null);
+});
+
+test('VGN Dragonfly 3 uses the VXE protocol, VGN YJX mice use YJX, and LAMZU 0x37B0 mice use the Glorious one', () => {
+  const ch = (usagePage, usage) => ({ usagePage, usage, path: `${usagePage}:${usage}` });
+  const compxLayout = [ch(1, 2), ch(0xff02, 2), ch(0xff04, 2)];
+  assert.equal(detectDriver({ vendorId: 0x391d, productId: 0x101d, channels: compxLayout }).id, 'kysona');
+  assert.equal(detectDriver({ vendorId: 0x391d, productId: 0x1a1a, channels: compxLayout }).id, 'kysona');
+  assert.notEqual((detectDriver({ vendorId: 0x391d, productId: 0x9999, channels: compxLayout }) || {}).id, 'kysona');
+  assert.equal(detectDriver({ vendorId: 0x391d, productId: 0x1a01, channels: [ch(0xff01, 0x10)] }).id, 'yjx');
+  assert.equal(detectDriver({ vendorId: 0x37b0, productId: 0x0001, channels: [ch(0xffa0, 1), ch(0xffff, 1)] }).id, 'sinowealth');
+});
+
+test('ROG Claymore II asks 12 01 and the 1EA7 receiver answers at register 0x94 or in its heartbeat', () => {
+  const rog = entry(0x0b05, 0x196b).steps[0];
+  assert.deepEqual(rog.request.slice(0, 3), [0x00, 0x12, 0x01]);
+  assert.deepEqual(rog.parse(frame([0x12, 0x01, 0, 0, 0, 0x4d, 0, 0, 1])), { capacity: 77, charging: true });
+  assert.equal(rog.parse(frame([0x12, 0x01, 0, 0, 0, 0xff, 0xaa, 0, 0])).offline, true);
+  assert.equal(rog.parse(frame([0x12, 0x02, 0, 0, 0, 50, 0, 0, 0])), null);
+  const mouse = entry(0x1ea7, 0x0064).steps[0];
+  assert.deepEqual(mouse.request, [0xb5, 0x05, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(mouse.parse([0xb5, 0x05, 0x94, 0x04, 0, 0, 63, 0]), { capacity: 63 });
+  assert.equal(mouse.parse([0xb5, 0x05, 0x93, 0x04, 0, 0, 63, 0]), null);
+  assert.deepEqual(mouse.parse([0xb5, 0x67, 1, 2, 3, 4, 1, 88]), { capacity: 88 });
+});
+
+test('ASUS ROG mice, MSI VERSA 300, Waizowl OGM 8K and the Void v2 on its cable', () => {
+  const gladius = entry(0x0b05, 0x1a72).steps[0];
+  assert.deepEqual(gladius.request.slice(0, 3), [0x00, 0x12, 0x07]);
+  assert.deepEqual(gladius.parse(frame([0x12, 0x07, 0, 0, 66, 0, 0, 0, 0, 1])), { capacity: 66, charging: true });
+  assert.equal(gladius.parse(frame([0xff, 0xaa, 0, 0, 0, 0, 0, 0, 0, 0])).offline, true);
+  assert.equal(gladius.parse(frame([0x12, 0x07, 0, 0, 0, 0, 0, 0, 0, 0])).offline, true);
+  assert.equal(entry(0x0b05, 0x1ace).steps[0].parse(frame([0x03, 0xff, 0xaa, 0, 0, 0, 0, 0, 0, 0, 0])).offline, true);
+  assert.equal(entry(0x0b05, 0x196b).steps[0].parse(frame([0xff, 0xaa, 0, 0, 0, 0, 0, 0, 0])).offline, true);
+  const asleep = new Array(16).fill(0); asleep[0] = 0x0f; asleep[1] = 0x20;
+  assert.equal(entry(0x0db0, 0x9e22).steps[0].parse(asleep).offline, true);
+  const omni = entry(0x0b05, 0x1ace).steps[0];
+  assert.deepEqual(omni.request.slice(0, 3), [0x03, 0x12, 0x07]);
+  assert.deepEqual(omni.parse(frame([0x03, 0x12, 0x07, 0, 0, 40, 0, 0, 0, 0, 0])), { capacity: 40, charging: false });
+  const versa = entry(0x0db0, 0x9e22).steps[0];
+  const v = new Array(16).fill(0); v[0] = 0x0f; v[1] = 0x20; v[14] = 0x80 | 58;
+  assert.deepEqual(versa.parse(v), { capacity: 58, charging: true });
+  const ogm = entry(0x1915, 0x0728).steps[0];
+  assert.equal(ogm.request.length, 65);
+  assert.equal(ogm.request.slice(1).reduce((a, b) => a + b, 0) & 0xff, 0xa1);
+  const reply = new Array(64).fill(0); reply[0] = 0x01; reply[2] = 0x8c; reply[3] = 0x01; reply[6] = 72;
+  reply[63] = (0xa1 - reply.slice(0, 63).reduce((a, b) => a + b, 0)) & 0xff;
+  assert.deepEqual(ogm.parse(reply), { capacity: 72 });
+  reply[63] = (reply[63] + 1) & 0xff;
+  assert.equal(ogm.parse(reply), null);
+  assert.equal(entry(0x1b1c, 0x2a09).steps.length, 1);
 });

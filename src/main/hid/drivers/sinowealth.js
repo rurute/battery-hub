@@ -14,7 +14,9 @@ const session = require('../session');
 
 const GLORIOUS = 0x258a;
 const GLORIOUS_MODELS = [[0x2011, 0x2022], [0x2013, 0x2024], [0x2012, 0x2023], [0x2014, 0x2025]]; // [wired, wireless]
-const LAYOUT_VENDORS = new Set([0x373e /* LAMZU */, 0x2023 /* MCHOSE A5 2.4G */]);
+// LAMZU's second vendor id 0x37B0 (TACHI, INCA, Maya, PARO, THORN, Atlantis OG and Mini) is read the
+// same way in LAMZU's web driver (lamzu.net/Config/env-models.json).
+const LAYOUT_VENDORS = new Set([0x373e /* LAMZU */, 0x37b0 /* LAMZU */, 0x2023 /* MCHOSE A5 2.4G */]);
 const LENGTH = 65;
 const ANSWER_ATTEMPTS = 6;
 const ANSWER_WAIT_MS = 50;
