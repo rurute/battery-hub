@@ -40,30 +40,46 @@ if (!store.get('uiV2')) {
   store.set('uiV2', true);
 }
 
+// ---- in-memory copy ----
+// electron-store reads and parses the whole file on every get and rewrites it atomically on every
+// set; with a week of history that was about 230 ms of blocking work per poll. So the devices and
+// settings are kept in memory, written only when they change, and handed out as copies, as
+// electron-store did, so a caller changing what it got never changes the store behind its back.
+const { isDeepStrictEqual } = require('util');
+let devicesCache = null;
+let settingsCache = null;
+const loadDevices = () => (devicesCache ??= store.get('devices'));
+const loadSettings = () => (settingsCache ??= store.get('settings'));
+const copy = (value) => structuredClone(value);
+function saveDevices() { store.set('devices', devicesCache); }
+
 // ---- devices ----
 function getDevices() {
-  return store.get('devices');
+  return copy(loadDevices());
 }
 function upsertDevice(id, patch) {
-  const devices = store.get('devices');
-  devices[id] = { ...(devices[id] || {}), ...patch, id };
-  store.set('devices', devices);
-  return devices[id];
+  const devices = loadDevices();
+  const next = { ...(devices[id] || {}), ...patch, id };
+  if (isDeepStrictEqual(devices[id], next)) return copy(next); // nothing changed: no write
+  devices[id] = copy(next);
+  saveDevices();
+  return copy(next);
 }
 function removeDevice(id) {
-  const devices = store.get('devices');
+  const devices = loadDevices();
+  if (!(id in devices)) return;
   delete devices[id];
-  store.set('devices', devices);
+  saveDevices();
 }
 // Folds one card into another when they turn out to be the same device.
 function mergeDevices(keepId, dropId) {
-  const devices = store.get('devices');
+  const devices = loadDevices();
   const keep = devices[keepId];
   const drop = devices[dropId];
   if (!keep || !drop) return;
   const newest = (drop.lastReadingAt || 0) > (keep.lastReadingAt || 0) ? drop : keep;
   const history = [...(keep.history || []), ...(drop.history || [])].sort((a, b) => a.t - b.t);
-  devices[keepId] = {
+  devices[keepId] = copy({
     ...keep,
     customName: keep.customName || drop.customName || null,
     customIcon: keep.customIcon || drop.customIcon || null,
@@ -76,43 +92,48 @@ function mergeDevices(keepId, dropId) {
     lastReadingAt: newest.lastReadingAt,
     history,
     links: [...(keep.links || []), { id: drop.id, driverId: drop.driverId, profile: drop.profile || null }, ...(drop.links || [])],
-  };
+  });
   delete devices[dropId];
-  store.set('devices', devices);
+  saveDevices();
 }
 
 // Gives a card another id, keeping everything set on it.
 function moveDevice(fromId, toId, patch) {
-  const devices = store.get('devices');
+  const devices = loadDevices();
   if (!devices[fromId] || devices[toId]) return;
-  devices[toId] = { ...devices[fromId], ...patch, id: toId };
+  devices[toId] = copy({ ...devices[fromId], ...patch, id: toId });
   delete devices[fromId];
-  store.set('devices', devices);
+  saveDevices();
 }
 
 // Persist a user-chosen card order as a per-device index.
 function reorderDevices(orderedIds) {
-  const devices = store.get('devices');
+  const devices = loadDevices();
   orderedIds.forEach((id, i) => { if (devices[id]) devices[id].order = i; });
-  store.set('devices', devices);
-  return devices;
+  saveDevices();
+  return copy(devices);
 }
 
 // ---- settings ----
 function getSettings() {
   // merge with defaults so newly-added keys are always present
-  return { ...DEFAULT_SETTINGS, ...store.get('settings') };
+  return copy({ ...DEFAULT_SETTINGS, ...loadSettings() });
 }
 function getSetting(key) {
-  return getSettings()[key];
+  const saved = loadSettings();
+  const value = key in saved ? saved[key] : DEFAULT_SETTINGS[key];
+  return value !== null && typeof value === 'object' ? copy(value) : value;
 }
 function setSettings(patch) {
-  const settings = { ...getSettings(), ...patch };
-  store.set('settings', settings);
-  return settings;
+  const settings = { ...DEFAULT_SETTINGS, ...loadSettings(), ...patch };
+  if (!isDeepStrictEqual(settings, { ...DEFAULT_SETTINGS, ...loadSettings() })) {
+    settingsCache = copy(settings);
+    store.set('settings', settingsCache);
+  }
+  return copy(settings);
 }
 function getPollIntervalSec() {
-  return getSettings().pollIntervalSec;
+  return getSetting('pollIntervalSec');
 }
 
 module.exports = {

@@ -10,8 +10,14 @@ const { execFile } = require('child_process');
 const path = require('path');
 const { pad } = require('./exchange');
 
-const AUDEZE = 0x3329;
-const PRODUCTS = new Set([0x4b19, 0x4b18, 0x4b29, 0x4b28]); // Maxwell and Maxwell 2, PC and Xbox
+// Maxwell and Maxwell 2, PC and Xbox; 4b1e is the Xbox Maxwell on USB-C and 4ba9 the Maxwell 2 ANC
+// dongle (HeadsetControl PRs #642, #644, both checked on hardware). Skullcandy's PLYR (34f0:3210) and
+// Crusher PLYR 720 (34f0:5310) speak the same Airoha RACE framing (HaloBattery skullcandy.py, capture
+// of 70 % = Skull-HQ; patalbansishashank/Headroom on the author's PLYR 720).
+const PRODUCTS = new Map([
+  [0x3329, new Set([0x4b19, 0x4b18, 0x4b29, 0x4b28, 0x4b1e, 0x4ba9])],
+  [0x34f0, new Set([0x3210, 0x5310])],
+]);
 const REPORT_OUT = 0x06;
 const REPORT_SIZE = 62;
 const ROUTE_HEADSET = 0x80;
@@ -30,7 +36,8 @@ const preference = (c) => (c.usagePage === COMMAND.usagePage && c.usage === COMM
 const candidates = (logicalDevice) => [...logicalDevice.channels].sort((a, b) => preference(b) - preference(a));
 
 function matches(logicalDevice) {
-  return logicalDevice.vendorId === AUDEZE && PRODUCTS.has(logicalDevice.productId);
+  const products = PRODUCTS.get(logicalDevice.vendorId);
+  return !!products && products.has(logicalDevice.productId);
 }
 
 function buildRequest() {

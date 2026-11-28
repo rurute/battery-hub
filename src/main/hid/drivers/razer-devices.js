@@ -69,11 +69,20 @@ module.exports = [
   [0x00db, 0x1f, "cobra hyperspeed wireless"],
   [0x00de, 0x1f, "viper v3 pro se wired"],
   [0x00df, 0x1f, "viper v3 pro se wireless"],
+  [0x00e0, 0x1f, "orochi v2 (2026) receiver"], // OpenRazer master (PR #2893)
+  // From open OpenRazer PRs, each tested on the mouse by its author: Basilisk V4 Pro (#2975; HaloBattery
+  // #514, 53 % = Synapse), Basilisk V4 HyperSpeed (#2959), Naga V3 Pro (#2904).
+  [0x00e2, 0x1f, "basilisk v4 pro wired"],
+  [0x00e3, 0x1f, "basilisk v4 pro receiver"],
+  [0x00e7, 0x1f, "naga v3 pro wired"],
+  [0x00e8, 0x1f, "naga v3 pro hyperspeed"],
+  [0x00ea, 0x1f, "basilisk v4 hyperspeed receiver"],
+  [0x00eb, 0x1f, "basilisk v4 hyperspeed wired"],
   // Not in OpenRazer yet (issue #56); the transaction id follows the Viper V3 Pro.
   [0x00e5, 0x1f, "viper v4 pro wired"],
   [0x00e6, 0x1f, "viper v4 pro wireless"],
   [0x0258, 0x1f, "blackwidow v3 mini hyperspeed wired"],
-  [0x025a, 0xff, "blackwidow v3 pro wired"],
+  [0x025a, 0x3f, "blackwidow v3 pro wired"], // OpenRazer's charge level uses 0x3f for this one only
   [0x025c, 0x9f, "blackwidow v3 pro wireless"],
   [0x0271, 0x9f, "blackwidow v3 mini hyperspeed wireless"],
   [0x0290, 0x9f, "deathstalker v2 pro wireless"],
@@ -83,6 +92,8 @@ module.exports = [
   [0x02b9, 0x1f, "blackwidow v4 mini hyperspeed wired"],
   [0x02ba, 0x9f, "blackwidow v4 mini hyperspeed wireless"],
   [0x02cd, 0x1f, "joro"],
+  [0x02d2, 0x9f, "blackwidow v4 low profile tenkeyless hyperspeed wireless"],
+  [0x02d4, 0x1f, "blackwidow v4 low profile tenkeyless hyperspeed wired"],
   [0x02d5, 0x9f, "blackwidow v4 tenkeyless hyperspeed wireless"],
   [0x02d7, 0x1f, "blackwidow v4 tenkeyless hyperspeed wired"],
 ];

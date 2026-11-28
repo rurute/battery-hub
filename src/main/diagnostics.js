@@ -276,12 +276,14 @@ function formatReport({ checks, verdict, facts, errors }) {
 function issueLink(template, fields, limit = URL_LIMIT) {
   const base = `https://github.com/${REPO}/issues/new?template=${template}&`;
   const link = (values) => base + Object.entries(values).map(([name, value]) => `${name}=${encodeURIComponent(value)}`).join('&');
-  if (link(fields).length <= limit) return { url: link(fields), complete: true };
+  // The whole report, for sending without an account (relay.js): no link, so nothing is cut.
+  const form = { template, fields };
+  if (link(fields).length <= limit) return { url: link(fields), complete: true, form };
   const last = Object.keys(fields).pop();
   const lines = fields[last].split('\n');
   const cut = () => ({ ...fields, [last]: `${lines.join('\n')}\n${CUT_SHORT}` });
   while (lines.length && link(cut()).length > limit) lines.pop();
-  return { url: link(cut()), complete: false };
+  return { url: link(cut()), complete: false, form };
 }
 
 function requestUrl(report, limit = URL_LIMIT) {

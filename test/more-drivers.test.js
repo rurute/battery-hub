@@ -53,7 +53,7 @@ test('Darmoshark answers feature report 0x51, Telink mice get a summed retry, AU
   assert.equal(darmoshark.parseReply([0x51, 0x06, 0].concat(new Array(18).fill(0))), null);
   const akko = require('../src/main/hid/drivers/akko');
   assert.deepEqual(akko.REQUEST_SUMMED.slice(0, 5), [0x04, 0x20, 0x00, 0x1a, 0x06]);
-  const aula = require('../src/main/hid/drivers/table').DEVICES.find((e) => e.vendorId === 0x0c45 && e.productIds.includes(0xfefe)).steps[0];
+  const aula = require('../src/main/hid/drivers/table').DEVICES.find((e) => e.vendorId === 0x0c45 && e.productIds.includes(0xfefe) && !e.product).steps[0];
   assert.equal(aula.request.length, 33);
   assert.equal(aula.request.slice(1, 32).reduce((a, b) => a + b, 0) & 0xff, aula.request[32]);
   assert.deepEqual(aula.parse([0x20, 0x01, 0x00, 76]), { capacity: 76 });

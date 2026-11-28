@@ -25,12 +25,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isWired = (d) => d.vendorId === GLORIOUS && GLORIOUS_MODELS.some(([wired]) => wired === d.productId);
 const isGlorious = (d) => d.vendorId === GLORIOUS && GLORIOUS_MODELS.some((pair) => pair.includes(d.productId));
 const hasLayout = (d) => d.channels.some((c) => c.usagePage === 0xffa0) && d.channels.some((c) => c.usagePage === 0xffff);
+// WLmouse (0x36A7) and the Attack Shark R5 Ultra (373e:0047) show only the 0xFFFF collection, with the
+// same exchange: HaloBattery checked a Beast X Max (00 a1 00 02 02 00 83 01 60 = 96 %, charging) and an
+// R5 Ultra (91 %); WLmouse's web hub reads all its mice this way, LAMZU's byte for byte.
+const FFFF_ONLY_VENDORS = new Set([0x36a7]);
+const FFFF_ONLY_PRODUCTS = new Set(['373e:0047']);
+const ffffOnly = (d) => FFFF_ONLY_VENDORS.has(d.vendorId)
+  || FFFF_ONLY_PRODUCTS.has(`${(d.vendorId || 0).toString(16)}:${(d.productId || 0).toString(16).padStart(4, '0')}`);
 // The 64-byte feature report lives on a 0xFFFF collection (mxw opens interface 2).
 const channelsOf = (d) => d.channels.filter((c) => c.usagePage === 0xffff || (isGlorious(d) && c.interface === 2))
   .sort((a, b) => (b.interface === 2) - (a.interface === 2));
 
 function matches(logicalDevice) {
   if (isGlorious(logicalDevice)) return channelsOf(logicalDevice).length > 0;
+  if (ffffOnly(logicalDevice)) return logicalDevice.channels.some((c) => c.usagePage === 0xffff);
   return LAYOUT_VENDORS.has(logicalDevice.vendorId) && hasLayout(logicalDevice);
 }
 
@@ -43,19 +51,22 @@ function request() {
 }
 
 // A reading, { offline } for a sleeping mouse, or null when the answer isn't ready.
-function parseReply(raw, wired) {
+// WLmouse also answers ready as A2 (HaloBattery wlmouse.py: "a1|a2 00 02 02 00 83"), so that counts
+// for its vendor id only.
+const WLMOUSE = 0x36a7;
+function parseReply(raw, wired, vendorId) {
   if (raw.length < 9 || raw[6] !== 0x83) return null;
   if (raw[1] === 0xa4) return { offline: true };
-  if (raw[1] !== 0xa1) return null;
+  if (raw[1] !== 0xa1 && !(raw[1] === 0xa2 && vendorId === WLMOUSE)) return null;
   return { capacity: Math.min(100, Math.max(1, raw[8])), charging: raw[7] === 1 || (wired && raw[8] < 100) };
 }
 
-async function readFrom(channel, wired) {
+async function readFrom(channel, wired, vendorId) {
   const dev = await session.acquire(channel.path);
   await session.sendFeatureReport(channel.path, dev, request());
   for (let i = 0; i < ANSWER_ATTEMPTS; i++) {
     await sleep(ANSWER_WAIT_MS);
-    const reading = parseReply(await session.getFeatureReport(channel.path, dev, 0x00, LENGTH), wired);
+    const reading = parseReply(await session.getFeatureReport(channel.path, dev, 0x00, LENGTH), wired, vendorId);
     if (reading && reading.offline) throw new Error('mouse is off');
     if (reading) return reading;
   }
@@ -66,7 +77,7 @@ async function readBattery(logicalDevice) {
   let lastError = new Error('no command channel');
   for (const channel of channelsOf(logicalDevice)) {
     try {
-      return await readFrom(channel, isWired(logicalDevice));
+      return await readFrom(channel, isWired(logicalDevice), logicalDevice.vendorId);
     } catch (e) {
       lastError = e;
       if (/is off$/.test(e.message)) break;

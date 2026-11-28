@@ -6,6 +6,66 @@ All notable changes to this project are documented here. Versions follow
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-11-27
+
+### Added
+
+- From the makers' own web apps (read from their code, not yet confirmed on hardware): VGN's YJX, "ldMs", "king" and
+  Keychron-platform mice and its keyboard dongles; more MCHOSE mice, including the newer "0x4D" ones; ATK A9 PRO MAX and
+  Duckbill ELITE, more ATK NearLink devices; Rongyuan receivers under MonsGeek, MSI, Trust and VGN ids. Pulsar's
+  Fusion2 mice (Xlite V4, X3, Feinmann) are from pulsar-mouse-linux, tested on the mice.
+- Mice, each from a source that checked it on hardware: Pulsar 8K Dongle Gen.2 and CrazyLight, G-Wolves 8K receiver,
+  Endgame Gear XM2we, iRocks M31R and Zebronics on the VXE frame; WLmouse and Attack Shark R5 Ultra; SteelSeries Aerox 3
+  Wireless Gen 2, Rival 650 and Rival Pro; ASUS ROG/TUF mice from G-Helper's list; HyperX Pulsefire Haste 2 and Dart;
+  MSI VERSA PRO; NZXT Lift Elite; Cooler Master MM712/MM731; VAXEE; Ninjutso Sora V3; CROCIRIS X7; DARKRIM SHADOW;
+  Delux M800 Pro; Redragon M690 PRO; Darmoshark N5; Rapoo VT9 Pro V2 and the VT7 cable.
+- Keyboards: ASUS ROG Azoth, Azoth X/Extreme, Falchion, Falchion RX LP, Strix Scope II 96 and Scope RX TKL Wireless
+  (G-Helper); MCHOSE K87 and G98 Pro; Lofree Flow Lite84; GANSS GS3075T; Alienware Pro Wireless; Red Square Alumix
+  TKL; CHERRY MX 3.0S Wireless; SteelSeries Apex Pro TKL Wireless and Apex Pro Mini Wireless; Razer BlackWidow V4
+  Low Profile TKL HyperSpeed. Most were checked on hardware by HaloBattery or G-Helper; the Apex Pro's level scale is
+  not yet confirmed.
+- Razer Basilisk V4 Pro, Basilisk V4 HyperSpeed, Naga V3 Pro and Orochi V2 (2026), from OpenRazer (open PRs, each
+  tested by its author).
+- Headsets, from HeadsetControl, HaloBattery, HyperHeadset and OpenLinkHub, each checked on hardware by its source: Sony
+  INZONE H5 and H9 II; Razer BlackShark V2 HyperSpeed, Kraken V4 and V4 Pro (cable), BlackShark V3 X HyperSpeed,
+  BlackShark V2 Pro (2020) and Nari; SteelSeries Arctis Nova Pro Omni, Nova Elite and GameBuds; HyperX Cloud Alpha 2
+  Wireless, Cloud Core Wireless and more Cloud ids; Corsair HS80 RGB and Virtuoso XT on their cable, SABRE v3 PRO
+  (issue #249); Logitech G325 and G PRO X 2; Jabra Link 380/390, Evolve3 75 and Evolve2 65 Flex; Poly BT600; JBL
+  Quantum 810/910; Lenovo Wireless VoIP; ASUS ROG Strix Go 2.4 and TUF Gaming H3; Audeze Maxwell Xbox and ANC dongles;
+  Skullcandy PLYR and Crusher PLYR 720; FIFINE HT6.
+- Corsair: more Slipstream dongles (Dark Core RGB Pro and Pro SE, Ironclaw, Harpoon, Katar Pro), the K65 PLUS dongle, and
+  wireless mice and keyboards on their cable, in OpenLinkHub's framing (HaloBattery checked it on hardware).
+- AULA F108 Pro on its dongle, which uses Apple's vendor id (issue #81).
+- Controllers, as SDL and Linux read them: Flydigi Vader 4/5 Pro and Apex 4/5/6 (issues #25, #125), 8BitDo Ultimate 2
+  and Ultimate 3, both Steam Controllers, the NVIDIA SHIELD controller, Amazon Luna over Bluetooth and SInput pads.
+- Reports without a GitHub account: a device report, an "it works" or a support request can be sent from the app, and
+  the replies show up in Settings → Help → Your reports, where they can be answered, with a notification for each
+  new one. It goes through a small relay (relay/), and stays hidden until the relay is set up.
+
+### Fixed
+
+- Mice on the 3554:fa09 Compx receiver that never answer the keyboard session are now read as mice (issues #244,
+  #190, #82, #116), and once a receiver is known to carry a mouse it is read as one straight away, without the slow
+  keyboard session first.
+- Second review of the new devices against their sources: the ATK Duckbill ELITE (Waizowl) is asked with a feature
+  report, as ATK's hub does; the Corsair NIGHTSWORD v2 on its cable speaks the SABRE v3 PRO's newer protocol, and the
+  VANGUARD 96 and 99 AIR wait for a capture; a Corsair answer must come from the device that was asked, on 0xFF42/0x0001
+  only; short feature reports are read with a full-size buffer; impossible millivolt values are skipped instead of
+  showing a false low level; the Arctis GameBuds count only buds out of the case; a Pulsar Fusion2 dongle with no mouse
+  shows as off; WLmouse's other "ready" answer is accepted; the Rival 650 on its cable and an INZONE headset that
+  refuses the request are no longer shown as off.
+- Faster and lighter: the app keeps its saved data in memory instead of re-reading and re-writing the whole file
+  many times a check; devices that answered last time are read first, so a silent one no longer holds the others up;
+  Refresh reads devices while the Windows and Bluetooth scan runs; reads of one device never overlap; a device handle
+  is never closed while a read on it may still be running; the tray in list mode is redrawn only when something
+  changed; and the Bluetooth LE reader never runs twice at once and, on its timer, asks only the devices you added.
+- Razer BlackWidow V3 Pro on its cable: asked with the transaction id OpenRazer uses for it (0x3f, not 0xff).
+- MCHOSE V9 PRO: read while charging or full, and "asleep"; only a headset on battery was read (issues #43, #250).
+- Corsair Slipstream receiver (issue #46): asked in OpenLinkHub's framing, which its replies fit, with the old framing
+  kept as a fallback.
+- VSG Aquila Fly and Redragon M913 receivers (25a7:fa3f, fa07) showed a tenth of the level (6% for 60%), and a full
+  mouse on its cable stayed "Charging", so the fully charged alert never came (issue #224).
+
 ## [2.0.8] - 2026-11-26
 
 ### Added
@@ -430,7 +490,8 @@ First stable release, consolidating the 1.0.x and 1.1.x series.
 Initial public release: live battery monitoring for wireless HID devices, per-device tray
 icons, low-battery notifications, history sparklines and the guided calibration wizard.
 
-[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.8...HEAD
+[Unreleased]: https://github.com/battery-hub/battery-hub/compare/v2.0.9...HEAD
+[2.0.9]: https://github.com/battery-hub/battery-hub/compare/v2.0.8...v2.0.9
 [2.0.8]: https://github.com/battery-hub/battery-hub/compare/v2.0.7...v2.0.8
 [2.0.7]: https://github.com/battery-hub/battery-hub/compare/v2.0.6...v2.0.7
 [2.0.6]: https://github.com/battery-hub/battery-hub/compare/v2.0.5...v2.0.6

@@ -142,6 +142,11 @@ const PATTERNS = [
     pt: (m) => `Funcionando: o Windows tem leitura de bateria de ${m[1] === '1' ? '1 dispositivo' : `${m[1]} dispositivos`}.`,
   }],
   [/^(\d+) in the last week\.$/, { pt: (m) => `${m[1]} na última semana.` }],
+  // Recent errors with whole-app ends from outside left out of the count (diagnostics.js checkCrashes).
+  [/^(.+?) The app was ended from outside (\d+) times? \(Windows shutting down, or ended in Task Manager\), which isn't counted\.$/, {
+    pt: (m, l) => `${bhTranslate(m[1], l)} O app foi encerrado de fora ${m[2] === '1' ? '1 vez' : `${m[2]} vezes`}`
+      + ' (o Windows desligando ou encerrado no Gerenciador de Tarefas), e isso não conta.',
+  }],
   [/^Last read (.+)\.$/, { pt: (m) => `Última leitura ${checkAgo(m[1])}.` }],
   [/^Didn't answer, so it may be asleep\. Last read (.+)\.$/, {
     pt: (m) => `Não respondeu, então pode estar em repouso. Última leitura ${checkAgo(m[1])}.`,

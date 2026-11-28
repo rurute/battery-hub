@@ -21,7 +21,7 @@ function parseStatus(f) {
   if (f.length < 4 || f[0] !== 0x06 || f[1] !== 0x56) return null;
   if (f[2] === 0xff) return { offline: true };
   if (f[2] < 1 || f[2] > 100) return null;
-  return { capacity: f[2], charging: f[3] === 1 };
+  return { capacity: f[2], charging: f[3] === 1 && f[2] < 100 }; // on the cable at 100 it is full (mouse_tray bloody.py)
 }
 
 async function readBattery(d) {

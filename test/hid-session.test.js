@@ -365,3 +365,44 @@ test('kysona: a Redragon receiver saying twice it has no mouse means the mouse i
   answers.reads = [[], frame9([9, 3, 0, 0, 0, 1, 0]), frame9([9, 3, 0, 0, 0, 1, 0])];
   await assert.rejects(kysona.readBattery(logical), /^Error: mouse is off$/);
 });
+
+test('kysona: the VSG Aquila Fly receiver reads 0-10, and 100 on the cable is full, not charging (#224)', async () => {
+  assert.deepEqual(kysona.parseFrame(frame9([9, 4, 0, 0, 0, 2, 6, 0]), true), { capacity: 60, charging: false });
+  assert.deepEqual(kysona.parseFrame(frame9([9, 4, 0, 0, 0, 2, 8, 1]), true), { capacity: 80, charging: true });
+  assert.deepEqual(kysona.parseFrame(frame9([9, 4, 0, 0, 0, 2, 10, 1]), true), { capacity: 100, charging: false });
+  assert.deepEqual(kysona.parseFrame(frame9([9, 4, 0, 0, 0, 2, 6, 0])), { capacity: 6, charging: false });
+  const { answers, logical } = redragon();
+  logical.productId = 0xfa3f;
+  answers.reads = [[], frame9([9, 4, 0, 0, 0, 2, 7, 0])];
+  assert.equal((await kysona.readBattery(logical)).capacity, 70);
+});
+
+test('session: a failed write closes the handle only when no read is pending on it', async () => {
+  const session = require('../src/main/hid/session');
+  const quiet = mouse();
+  const dev = await session.acquire(quiet.path);
+  quiet.dev.reads = [[]]; // a read that timed out: hidapi leaves it running
+  await session.read(quiet.path, dev, 10);
+  quiet.dev.writeError = new Error('Cannot write to hid device');
+  await assert.rejects(session.write(quiet.path, dev, [1]), /Cannot write/);
+  assert.equal(quiet.dev.closes, 0, 'a read may still be pending');
+
+  const idle = mouse();
+  const dev2 = await session.acquire(idle.path);
+  idle.dev.reads = [[0x01, 0x02]]; // the last read came back with data: nothing pending
+  await session.read(idle.path, dev2, 10);
+  idle.dev.writeError = new Error('Cannot write to hid device');
+  await assert.rejects(session.write(idle.path, dev2, [1]), /Cannot write/);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(idle.dev.closes, 1);
+});
+
+test('session: serialize runs calls with one key one after another, other keys alongside', async () => {
+  const { serialize } = require('../src/main/hid/session');
+  const log = [];
+  const slow = (name, ms) => () => new Promise((r) => setTimeout(() => { log.push(name); r(name); }, ms));
+  await Promise.all([serialize('a', slow('a1', 30)), serialize('a', slow('a2', 1)), serialize('b', slow('b1', 5))]);
+  assert.deepEqual(log, ['b1', 'a1', 'a2']);
+  await assert.rejects(serialize('a', () => Promise.reject(new Error('x'))), /x/);
+  assert.equal(await serialize('a', () => 'after a failure'), 'after a failure');
+});

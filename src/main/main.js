@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeTheme, Menu, shell, net } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, Menu, shell, net, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -47,6 +47,8 @@ const flyout = require('./flyout');
 const system = require('./system-batteries');
 const diagnostics = require('./diagnostics');
 const notifier = require('./notifier');
+const relay = require('./relay').create(store);
+const { tr } = require('./lang');
 const { offLabel } = require('../renderer/estimate'); // shared with the window, so the tray says the same
 
 const ICON = path.join(__dirname, '..', '..', 'assets', 'icon.png');
@@ -258,6 +260,7 @@ app.whenReady().then(() => {
   if (!startHidden) createWindow(true);
   flyout.prepare(roundWindowCorners);
   scheduleUpdateChecks();
+  scheduleReplyChecks();
   poller.setCardsChangedHandler((droppedId) => {
     if (droppedId) {
       notifier.reset(droppedId);
@@ -473,6 +476,30 @@ ipcMain.handle('support:works-report', async (evt, id) => {
 });
 
 ipcMain.handle('support:run', () => diagnostics.runChecks(supportDeps()));
+
+// Reports sent without a GitHub account (relay.js): sending, the list with its replies, answering.
+ipcMain.handle('support:relay-available', () => relay.available());
+ipcMain.handle('support:send-direct', (evt, form, hardware) => {
+  if (!form || typeof form !== 'object' || !form.fields) throw new Error('Nothing to send');
+  return relay.send(form, hardware);
+});
+ipcMain.handle('support:my-reports', () => relay.list());
+ipcMain.handle('support:reply', (evt, number, text) => relay.reply(Number(number), String(text || '')));
+
+// A reply to a report sent from here: a notification that opens the window on Your reports.
+const REPLY_FIRST_CHECK_MS = 2 * 60 * 1000;
+const REPLY_CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
+function scheduleReplyChecks() {
+  if (!relay.available()) return;
+  const check = () => relay.checkReplies((report) => {
+    if (!store.getSetting('notifyEnabled')) return;
+    const note = new Notification({ title: tr('New reply to your report'), body: `#${report.number} ${report.title}`, icon: ICON });
+    note.on('click', () => { showWindow(); if (mainWindow) mainWindow.webContents.send('show-my-reports'); });
+    note.show();
+  }).catch((e) => logLine('INFO', `relay: reply check failed: ${e && e.message}`));
+  setTimeout(check, REPLY_FIRST_CHECK_MS);
+  setInterval(check, REPLY_CHECK_EVERY_MS);
+}
 
 ipcMain.handle('support:device-report', async (evt, request) => {
   const live = await hidClient.enumerate().catch(() => []);

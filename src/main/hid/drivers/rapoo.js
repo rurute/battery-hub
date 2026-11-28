@@ -7,7 +7,9 @@
 const session = require('../session');
 
 const VENDOR = 0x24ae;
-const PRODUCTS = new Set([0x1413, 0x1417]);
+// 14a9 (VT9 Pro V2) and 4613 (the VT7 on its cable) push the same report 7 (HaloBattery rapoo.py,
+// #193 and #235 on a VT7).
+const PRODUCTS = new Set([0x1413, 0x1417, 0x14a9, 0x4613]);
 const UNLOCK = [0x06, 0xa5, 0xa3].concat(new Array(30).fill(0));
 const TIMEOUT_MS = 4000;
 const REPOKE_MS = 1000;

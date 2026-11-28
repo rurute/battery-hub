@@ -130,6 +130,19 @@ test('the dynamic messages read well in Portuguese', () => {
   assert.equal(pt('Working: Windows has a battery reading for 4 devices.'), 'Funcionando: o Windows tem leitura de bateria de 4 dispositivos.');
   assert.equal(pt('Working: Windows has a battery reading for 1 device.'), 'Funcionando: o Windows tem leitura de bateria de 1 dispositivo.');
   assert.equal(pt('11 in the last week.'), '11 na última semana.');
+  // The app ended from outside (Task Manager, Windows shutting down) is listed but not counted (#184).
+  const { checkCrashes } = require('../src/main/diagnostics');
+  const ended = (at) => [
+    `[2026-11-24T${at}.044Z] ERROR child-process-gone: {"type":"Utility","reason":"crashed","exitCode":-1,"serviceName":"network.mojom.NetworkService"}`,
+    `[2026-11-24T${at}.046Z] ERROR child-process-gone: {"type":"GPU","reason":"crashed","exitCode":-1,"serviceName":"GPU"}`,
+  ];
+  assert.equal(pt(checkCrashes([...ended('17:55:31'), ...ended('18:10:53')]).detail),
+    'Nenhum na última semana. O app foi encerrado de fora 2 vezes (o Windows desligando ou encerrado no Gerenciador de Tarefas), e isso não conta.');
+  assert.equal(pt(checkCrashes(ended('17:55:31')).detail),
+    'Nenhum na última semana. O app foi encerrado de fora 1 vez (o Windows desligando ou encerrado no Gerenciador de Tarefas), e isso não conta.');
+  const gpu = '[2026-11-24T19:00:00.000Z] ERROR child-process-gone: {"type":"GPU","reason":"crashed","exitCode":-1073741819}';
+  assert.equal(pt(checkCrashes([gpu, ...ended('17:55:31')]).detail),
+    '1 na última semana. O app foi encerrado de fora 1 vez (o Windows desligando ou encerrado no Gerenciador de Tarefas), e isso não conta.');
   assert.equal(pt('All 312 files match what was shipped.'), 'Todos os 312 arquivos são iguais aos do pacote original.');
   assert.equal(pt('3 of 312 files are missing or changed.'), '3 de 312 arquivos estão ausentes ou alterados.');
   assert.equal(pt('Last read just now.'), 'Última leitura agora mesmo.');
