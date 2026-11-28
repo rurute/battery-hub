@@ -3,6 +3,8 @@
 //   taskbar-battery.exe --self-test [--assets <dir>]      runs SelfTest and exits 0 / 1.
 // stdin: one JSON line per update (Protocol). stdout: one "WARN|INFO|ERROR <text>" line per event.
 // It ends when stdin closes or the --parent process is gone.
+// --assets is only used when it names the app's own icon folder, <exe folder>\..\..\assets\taskbar
+// (AssetsPath); any other folder, UNC share or device path gets one WARN and the levels without icons.
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -42,15 +44,22 @@ namespace BatteryHubTaskbar
                 }
             }
 
+            string assetsProblem;
+            var icons = AssetsPath.Check(assetsDir, AssetsPath.ExePath(), out assetsProblem);
             if (selfTest)
             {
-                return SelfTest.Run(assetsDir);
+                if (assetsProblem != null)
+                {
+                    Console.Out.WriteLine("WARN " + assetsProblem);
+                }
+
+                return SelfTest.Run(icons);
             }
 
             _out = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true };
             try
             {
-                return RunOverlay(assetsDir, parentArg);
+                return RunOverlay(icons, assetsProblem, parentArg);
             }
             catch (Exception ex)
             {
@@ -79,7 +88,8 @@ namespace BatteryHubTaskbar
             }
         }
 
-        private static int RunOverlay(string assetsDir, string parentArg)
+        // assetsDir is null when --assets was refused (assetsProblem says why) or not given.
+        private static int RunOverlay(string assetsDir, string assetsProblem, string parentArg)
         {
             Process parent = null;
             if (parentArg != null)
@@ -100,9 +110,14 @@ namespace BatteryHubTaskbar
                 }
             }
 
-            if (string.IsNullOrEmpty(assetsDir) || !Directory.Exists(assetsDir))
+            if (assetsProblem != null)
+            {
+                Log("WARN", assetsProblem);
+            }
+            else if (string.IsNullOrEmpty(assetsDir) || !Directory.Exists(assetsDir))
             {
                 Log("WARN", "The icon folder is not there, showing levels without icons: " + (assetsDir ?? "(no --assets)"));
+                assetsDir = null;
             }
 
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -289,6 +304,115 @@ namespace BatteryHubTaskbar
                     return true;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Which --assets values are used: only the app's own icon folder, the one next to the exe as the app
+    /// ships it (src\main\taskbar-battery.exe and assets\taskbar, both under the same app folder). The
+    /// path is compared as text before anything touches the disk, so a refused value (another folder,
+    /// a relative path, a UNC share, \\?\ or \\.\) is never opened and causes no network access. A UNC
+    /// path passes only when the exe itself runs from that share (as when it is run from WSL).
+    /// </summary>
+    internal static class AssetsPath
+    {
+        public static string ExePath()
+        {
+            try
+            {
+                return System.Reflection.Assembly.GetEntryAssembly().Location;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>The app's icon folder for the exe at exePath; null when it can't be worked out.</summary>
+        public static string Expected(string exePath)
+        {
+            try
+            {
+                var exeDir = Path.GetDirectoryName(exePath);
+                return string.IsNullOrEmpty(exeDir) ? null : Normalize(Path.Combine(exeDir, "..", "..", "assets", "taskbar"));
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The folder to read the icons from, or null. problem is set (one line, for a WARN) when given
+        /// was refused, and null when it is fine or was not given at all.
+        /// </summary>
+        public static string Check(string given, string exePath, out string problem)
+        {
+            problem = null;
+            if (given == null)
+            {
+                return null;
+            }
+
+            var reason = Refuse(given, exePath);
+            if (reason == null)
+            {
+                return given;
+            }
+
+            problem = "The icon folder is not the app's own (" + reason + "), showing levels without icons: " + given;
+            return null;
+        }
+
+        private static string Refuse(string given, string exePath)
+        {
+            if (given.Length == 0)
+            {
+                return "empty";
+            }
+
+            if (given.StartsWith(@"\\?\", StringComparison.Ordinal) || given.StartsWith(@"\\.\", StringComparison.Ordinal)
+                || given.StartsWith("//?/", StringComparison.Ordinal) || given.StartsWith("//./", StringComparison.Ordinal))
+            {
+                return "a device path";
+            }
+
+            var unc = given.StartsWith(@"\\", StringComparison.Ordinal) || given.StartsWith("//", StringComparison.Ordinal);
+            var drive = given.Length >= 3 && char.IsLetter(given[0]) && given[0] < 128 && given[1] == ':'
+                && (given[2] == '\\' || given[2] == '/');
+            if (!unc && !drive)
+            {
+                return "not a full path";
+            }
+
+            var expected = Expected(exePath);
+            if (expected == null)
+            {
+                return "can't tell where the exe is";
+            }
+
+            string full;
+            try
+            {
+                full = Normalize(given);
+            }
+            catch (Exception)
+            {
+                return "not a valid path";
+            }
+
+            if (!string.Equals(full, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                return unc ? "a network path" : "another folder";
+            }
+
+            return null;
+        }
+
+        // Text only: resolves . and .., turns / into \ and drops a trailing \. Doesn't touch the disk.
+        private static string Normalize(string path)
+        {
+            return Path.GetFullPath(path).TrimEnd('\\');
         }
     }
 }

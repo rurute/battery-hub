@@ -76,6 +76,17 @@ namespace BatteryHubTaskbar
             add("ParseLine_ClampsLevel", ParseLine_ClampsLevel);
             add("ParseLine_NotJson", ParseLine_NotJson);
 
+            add("Decide_FreshMeasurementShows", Decide_FreshMeasurementShows);
+            add("Decide_NotMeasuredYetHidesWithoutLog", Decide_NotMeasuredYetHidesWithoutLog);
+            add("Decide_TaskbarChangedHidesWithoutLog", Decide_TaskbarChangedHidesWithoutLog);
+            add("Decide_StalledMeasurementHidesAndWarnsOnce", Decide_StalledMeasurementHidesAndWarnsOnce);
+            add("Decide_FullscreenAskedAtDecisionTime", Decide_FullscreenAskedAtDecisionTime);
+            add("Decide_TickCountWrapIsNotOld", Decide_TickCountWrapIsNotOld);
+
+            add("AssetsPath_AppFolderIsUsed", AssetsPath_AppFolderIsUsed);
+            add("AssetsPath_OthersAreRefused", AssetsPath_OthersAreRefused);
+            add("AssetsPath_NotGivenIsNoIconsWithoutProblem", AssetsPath_NotGivenIsNoIconsWithoutProblem);
+
             using (var icons = new IconSet(assetsDir))
             {
                 add("Render_TwoItemsWiderThanOne", () => Render_TwoItemsWiderThanOne(icons));
@@ -139,6 +150,172 @@ namespace BatteryHubTaskbar
         private static void True(bool condition, string what)
         {
             if (!condition) throw new Failure(what);
+        }
+
+        // --- Controller.Decide: the age of the measurement and full screen ---
+
+        private const int Now = 500000;
+        private const int Generation = 7;
+
+        private static Controller.Measurement Measured(int age, int generation = Generation)
+        {
+            return new Controller.Measurement(Probe(), unchecked(Now - age), generation);
+        }
+
+        private static Decision Decide(Policy policy, Controller.Measurement measured, bool fullscreen = false, int now = Now)
+        {
+            return Controller.Decide(policy, 1, measured, now, Generation, () => fullscreen, Overlay, Dpi);
+        }
+
+        private static void Decide_FreshMeasurementShows()
+        {
+            var log = new Recorder();
+            var decision = Decide(new Policy(log.Write), Measured(Controller.MaxAgeMs));
+
+            Equal(HideReason.None, decision.Reason, "reason");
+            Equal<Rectangle?>(new Rectangle(3107, 1400, 72, 32), decision.Bounds, "bounds");
+            Equal(0, log.Entries.Count, "log entries");
+        }
+
+        private static void Decide_NotMeasuredYetHidesWithoutLog()
+        {
+            var log = new Recorder();
+            var decision = Decide(new Policy(log.Write), null);
+
+            True(decision == null, "no measurement yet should hide without asking Policy");
+            Equal(0, log.Entries.Count, "log entries");
+        }
+
+        private static void Decide_TaskbarChangedHidesWithoutLog()
+        {
+            var log = new Recorder();
+            var decision = Decide(new Policy(log.Write), Measured(0, Generation - 1));
+
+            True(decision == null, "a measurement from before the taskbar changed should hide");
+            Equal(0, log.Entries.Count, "log entries");
+
+            // No new measurement since the change, and the old one is too old by now: hidden with one WARN.
+            var late = Decide(new Policy(log.Write), Measured(Controller.MaxAgeMs + 1, Generation - 1));
+            Equal(HideReason.TaskbarUnavailable, late.Reason, "reason when the old one is too old");
+            Equal(1, log.Count("WARN"), "WARN entries");
+        }
+
+        // UI Automation stuck after a good measurement: hidden, one WARN however many ticks; shown again
+        // (one INFO) once a new measurement is in.
+        private static void Decide_StalledMeasurementHidesAndWarnsOnce()
+        {
+            var log = new Recorder();
+            var policy = new Policy(log.Write);
+            var stuck = Measured(0);
+
+            Decision last = null;
+            for (var tick = 1; tick <= 20; tick++)
+            {
+                last = Decide(policy, stuck, false, Now + Controller.MaxAgeMs + tick * 300);
+            }
+
+            Equal(HideReason.TaskbarUnavailable, last.Reason, "reason");
+            True(last.Bounds == null, "bounds should be null");
+            Equal(1, log.Entries.Count, "log entries");
+            Equal("WARN", log.Entries[0].Level, "level");
+            True(log.Entries[0].Message.Contains(Controller.TooOldMessage), "message should say why, got: " + log.Entries[0].Message);
+
+            var again = Decide(policy, Measured(0));
+            Equal(HideReason.None, again.Reason, "reason after a new measurement");
+            Equal(1, log.Count("INFO"), "INFO entries");
+        }
+
+        private static void Decide_FullscreenAskedAtDecisionTime()
+        {
+            var log = new Recorder();
+            var policy = new Policy(log.Write);
+            var measured = Measured(0);
+            var asked = 0;
+            Func<bool> fullscreen = () => { asked++; return asked > 1; };
+
+            var first = Controller.Decide(policy, 1, measured, Now, Generation, fullscreen, Overlay, Dpi);
+            var second = Controller.Decide(policy, 1, measured, Now, Generation, fullscreen, Overlay, Dpi);
+
+            Equal(HideReason.None, first.Reason, "first reason");
+            Equal(HideReason.Fullscreen, second.Reason, "same measurement, full screen now");
+            Equal(2, asked, "full screen asked on each decision");
+            Equal(0, log.Entries.Count, "log entries");
+        }
+
+        private static void Decide_TickCountWrapIsNotOld()
+        {
+            var log = new Recorder();
+            var measured = new Controller.Measurement(Probe(), int.MaxValue - 100, Generation);
+            var decision = Decide(new Policy(log.Write), measured, false, int.MinValue + 100);
+
+            Equal(HideReason.None, decision.Reason, "201 ms across the wrap is fresh");
+            Equal(0, log.Entries.Count, "log entries");
+        }
+
+        // --- AssetsPath: --assets is only the app's own icon folder ---
+
+        private const string LocalExe = @"C:\Users\me\AppData\Local\Programs\battery-hub\resources\app\src\main\taskbar-battery.exe";
+        private const string LocalAssets = @"C:\Users\me\AppData\Local\Programs\battery-hub\resources\app\assets\taskbar";
+
+        private static void AssetsPath_AppFolderIsUsed()
+        {
+            var wslExe = @"\\wsl.localhost\Ubuntu\home\me\battery-hub\src\main\taskbar-battery.exe";
+            var cases = new[]
+            {
+                new[] { LocalExe, LocalAssets },
+                new[] { LocalExe, LocalAssets + "\\" },
+                new[] { LocalExe, @"C:\USERS\me\AppData\Local\Programs\battery-hub\resources\app\src\main\..\..\assets\taskbar" },
+                new[] { LocalExe, LocalAssets.Replace('\\', '/') },
+                new[] { wslExe, @"\\wsl.localhost\Ubuntu\home\me\battery-hub\assets\taskbar" },
+            };
+            foreach (var c in cases)
+            {
+                string problem;
+                var dir = AssetsPath.Check(c[1], c[0], out problem);
+                Equal(c[1], dir, "folder for " + c[1]);
+                True(problem == null, "no problem for " + c[1] + ", got: " + problem);
+            }
+        }
+
+        private static void AssetsPath_OthersAreRefused()
+        {
+            var refused = new[]
+            {
+                @"\\localhost\c$",
+                @"\\remote-host\share\assets\taskbar",
+                @"//remote-host/share/assets/taskbar",
+                @"\\?\" + LocalAssets,
+                @"\\.\" + LocalAssets,
+                @"assets\taskbar",
+                @"..\..\assets\taskbar",
+                @"C:assets\taskbar",
+                @"\Users\me\AppData\Local\Programs\battery-hub\resources\app\assets\taskbar",
+                @"C:\Windows",
+                LocalAssets + @"\..\..\other",
+                "",
+                "C:\\a\u0000b",
+            };
+            foreach (var given in refused)
+            {
+                string problem;
+                var dir = AssetsPath.Check(given, LocalExe, out problem);
+                True(dir == null, "should be refused: " + given);
+                True(problem != null && problem.StartsWith("The icon folder is not the app's own (", StringComparison.Ordinal),
+                    "should say why for " + given + ", got: " + problem);
+            }
+
+            // The app's folder of an exe on a share: still refused for a local exe, and the other way round.
+            string p;
+            True(AssetsPath.Check(@"\\wsl.localhost\Ubuntu\home\me\battery-hub\assets\taskbar", LocalExe, out p) == null, "share for a local exe");
+            True(AssetsPath.Check(LocalAssets, @"\\wsl.localhost\Ubuntu\home\me\battery-hub\src\main\taskbar-battery.exe", out p) == null, "local for an exe on a share");
+            True(AssetsPath.Check(LocalAssets, null, out p) == null && p != null, "unknown exe");
+        }
+
+        private static void AssetsPath_NotGivenIsNoIconsWithoutProblem()
+        {
+            string problem;
+            True(AssetsPath.Check(null, LocalExe, out problem) == null, "no folder");
+            True(problem == null, "not given is not a problem here (RunOverlay warns that it is not there)");
         }
 
         // --- Policy (from inzone-auto-switch's TaskbarOverlayPolicyTests) ---
