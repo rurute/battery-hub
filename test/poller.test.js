@@ -11,6 +11,19 @@ const store = {
     devices[toId] = { ...devices[fromId], ...patch, id: toId };
     delete devices[fromId];
   },
+  // Only what these tests look at of store.mergeDevices: the links, and the name kept.
+  mergeDevices: (keepId, dropId) => {
+    const keep = devices[keepId];
+    const drop = devices[dropId];
+    if (!keep || !drop) return;
+    devices[keepId] = {
+      ...keep,
+      customName: keep.customName || drop.customName || null,
+      identity: keep.identity || drop.identity,
+      links: [...(keep.links || []), { id: drop.id, driverId: drop.driverId, profile: drop.profile || null }, ...(drop.links || [])],
+    };
+    delete devices[dropId];
+  },
   getPollIntervalSec: () => 60,
 };
 let finishRead;
@@ -19,7 +32,9 @@ const hidClient = {
   readBattery: () => new Promise((resolve, reject) => { finishRead = { resolve, reject }; }),
 };
 const monitor = { isActive: () => false, start() {}, stopAll() {} };
-const drivers = { driverById: () => ({}), detectDriver: () => null };
+// The poller takes these functions out when it loads, so tests replace driverImpl's instead.
+const driverImpl = { driverById: () => ({}), detectDriver: () => null };
+const drivers = { driverById: (...a) => driverImpl.driverById(...a), detectDriver: (...a) => driverImpl.detectDriver(...a) };
 const system = {
   scan: async () => [], list: () => [], get: () => null, hasScanned: () => true,
   startWatching() {}, stopWatching() {}, isSystemId: (id) => /^(bt|xinput):/.test(id),
@@ -37,7 +52,7 @@ Module._load = function (request, ...rest) {
 const poller = require('../src/main/poller');
 Module._load = load;
 
-const { identityOf } = require('../src/main/identity');
+const { identityOf, routesOf } = require('../src/main/identity');
 
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
 const addMouse = () => { devices.mouse = { id: 'mouse', driverId: 'generic', product: 'Mouse' }; };
@@ -375,4 +390,78 @@ test('cards that answered last time are read before cards that are away', async 
     hidClient.enumerate = async () => [{ id: 'mouse' }];
     delete devices.quiet;
   }
+});
+
+// A G913 TKL on its cable (046d:c343) and in slot 1 of the c547 receiver: the same unit ID, so one card.
+// Each test uses its own channel paths: the poller remembers identities for the whole file.
+const G913 = 'logi:b35f408ec343:71b82111';
+const CABLE = '1133:49987:CABLESERIAL';
+const PARENT = '1133:50503:0123456789ab';
+const CHILD = `${PARENT}:408e`;
+
+async function withG913(tag, identifyChild, fn) {
+  const live = [
+    { id: PARENT, serialNumber: '0123456789ab', expanded: true, channels: [{ path: `${tag}-parent` }] },
+    { id: CHILD, serialNumber: '0123456789ab', product: 'G913 TKL', channels: [{ path: `${tag}-child` }], receiver: { slot: 1, wpid: 0x408e, kind: 1 } },
+    { id: CABLE, serialNumber: 'CABLESERIAL', product: 'G913 TKL LIGHTSPEED Wireless RGB Mechanical Gaming Keyboard', channels: [{ path: `${tag}-cable` }] },
+  ];
+  const asked = [];
+  const merges = [];
+  const { enumerate, readBattery, identify } = hidClient;
+  const { detectDriver } = driverImpl;
+  const { mergeDevices } = store;
+  driverImpl.detectDriver = () => ({ id: 'hidpp', needsIdentify: true });
+  hidClient.enumerate = async () => live;
+  hidClient.readBattery = async () => ({ capacity: 95, charging: false });
+  hidClient.identify = async (driverId, device) => {
+    asked.push(device.channels[0].path);
+    if (device.expanded) return null;
+    return device.id === CHILD ? identifyChild() : G913;
+  };
+  store.mergeDevices = (keepId, dropId) => { merges.push([keepId, dropId]); mergeDevices(keepId, dropId); };
+  try {
+    await poller.pollOnce(() => {}, { force: true });
+    await fn({ asked, merges });
+  } finally {
+    hidClient.enumerate = enumerate;
+    hidClient.readBattery = readBattery;
+    hidClient.identify = identify;
+    driverImpl.detectDriver = detectDriver;
+    store.mergeDevices = mergeDevices;
+    delete devices[CABLE];
+    delete devices[CHILD];
+  }
+}
+
+test('the cable card and the receiver card of one G913 TKL become one card', async () => {
+  const now = Date.now();
+  devices[CABLE] = { id: CABLE, driverId: 'hidpp', customName: 'Desk keyboard', history: [{ t: now - 60000, c: 80, ch: 1 }] };
+  devices[CHILD] = { id: CHILD, driverId: 'hidpp', history: [{ t: now - 180000, c: 60, ch: 0 }, { t: now - 120000, c: 59, ch: 0 }] };
+  await withG913('merge', () => G913, async () => {
+    const left = [CABLE, CHILD].filter((id) => devices[id]);
+    assert.equal(left.length, 1, 'one card is left');
+    const card = devices[left[0]];
+    assert.equal(card.customName, 'Desk keyboard');
+    assert.equal(card.identity, G913);
+    const ids = routesOf(card).map((r) => r.id);
+    assert.ok(ids.includes(CABLE) && ids.includes(CHILD), `both routes: ${ids}`);
+  });
+});
+
+test('plugging the cable attaches it to the receiver card', async () => {
+  devices[CHILD] = { id: CHILD, driverId: 'hidpp', customName: 'Desk keyboard', history: [] };
+  await withG913('attach', () => G913, async () => {
+    assert.equal(devices[CABLE], undefined, 'no new card for the cable');
+    assert.ok((devices[CHILD].links || []).some((l) => l.id === CABLE), 'the cable is a route of the receiver card');
+  });
+});
+
+test('a device that does not answer identify keeps its card', async () => {
+  devices[CABLE] = { id: CABLE, driverId: 'hidpp', history: [] };
+  devices[CHILD] = { id: CHILD, driverId: 'hidpp', history: [] };
+  await withG913('silent', () => { throw new Error('timeout waiting for battery response'); }, async ({ asked, merges }) => {
+    assert.ok(asked.includes('silent-child'), 'the child was asked');
+    assert.deepEqual(merges, []);
+    assert.ok(devices[CABLE] && devices[CHILD], 'both cards remain');
+  });
 });

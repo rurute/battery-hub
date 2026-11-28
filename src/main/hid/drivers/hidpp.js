@@ -20,6 +20,7 @@ const DIRECT = 0xff;
 const RECEIVER_SLOTS = [1, 2, 3, 4, 5, 6];
 const REPLY_MS = 400;
 
+const DEVICE_INFO = 0x0003;
 const UNIFIED_BATTERY = 0x1004;
 const BATTERY_STATUS = 0x1000;
 const BATTERY_VOLTAGE = 0x1001;
@@ -172,4 +173,30 @@ async function readOn(channel, logicalDevice) {
   }
 }
 
-module.exports = { id: 'hidpp', matches, readBattery, parseUnified, parseStatus, parseVoltage, replyTo, request };
+const hex = (bytes) => bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+
+// 0x0003 getDeviceInfo: <entities> <unit ID x4> <transport x2> <model ID x6> <extended model>.
+// The model ID lists the device's PID on each transport, so it reads the same on the cable and on
+// the receiver; the unit ID tells two of one model apart. No usable unit ID means no proof.
+function identityFromInfo(p) {
+  const unit = p.slice(1, 5);
+  if (unit.every((b) => b === 0x00) || unit.every((b) => b === 0xff)) return null;
+  return `logi:${hex(p.slice(7, 13))}:${hex(unit)}`;
+}
+
+// Which physical unit this is, so its cable and its receiver slot share one card. A receiver that
+// isn't split per device (see lightspeed.js) says nothing about which of its devices it means.
+async function identify(logicalDevice) {
+  const channel = channelOf(logicalDevice);
+  if (!channel) return null;
+  const { receiver } = logicalDevice;
+  if (!receiver && /receiver/i.test(logicalDevice.product)) return null;
+  const device = receiver ? receiver.slot : DIRECT;
+  return serialize(channel.path, async () => {
+    const index = await featureIndex(channel, device, DEVICE_INFO);
+    if (!index) return null;
+    return identityFromInfo(await call(channel, device, index, 0));
+  });
+}
+
+module.exports = { id: 'hidpp', needsIdentify: true, matches, readBattery, identify, identityFromInfo, parseUnified, parseStatus, parseVoltage, replyTo, request };
