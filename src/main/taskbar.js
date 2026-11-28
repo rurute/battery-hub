@@ -14,6 +14,9 @@ const BATCH_MS = 50;
 const GIVE_UP_AFTER = 5;          // exits in a row
 const STEADY_RUN_MS = 60 * 1000;  // a run this long resets the count
 const LEVELS = /^(WARN|INFO|ERROR) (.*)$/;
+// What the exe prints is not trusted: anything a log viewer could take as a line break or a control
+// (a lone CR, NEL, U+2028, U+2029, other C0/C1 controls) becomes a space, so one exe line is one log line.
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 
 let s = null; // state of the current start(); null before start
 
@@ -173,10 +176,11 @@ function readLines(stream) {
   let buffer = '';
   stream.on('data', (chunk) => {
     buffer += String(chunk);
-    const lines = buffer.split(/\r?\n/);
+    const lines = buffer.split('\n');
     buffer = lines.pop();
-    for (const line of lines) {
-      if (!line) continue;
+    for (const raw of lines) {
+      const line = raw.replace(/\r$/, '').replace(UNSAFE, ' ');
+      if (!line.trim()) continue;
       const m = LEVELS.exec(line);
       if (m) log(m[1], m[2]);
       else log('INFO', line);

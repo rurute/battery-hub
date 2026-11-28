@@ -432,3 +432,20 @@ test('stdout WARN/INFO/ERROR lines go to logLine with the same level, prefixed "
     ['ERROR', 'taskbar: from stderr'],
   ]);
 });
+
+test('exe output cannot forge log lines: lone CR, U+2028, U+2029 and other controls stay in one line', () => {
+  const h = harness({ settings: { taskbarBattery: true }, devices: { m: mouse(82) } });
+  h.start();
+  h.advance(50);
+  const child = h.last();
+  h.logs.length = 0;
+  child.stdout.emit('data', 'INFO harmless\r[2000-01-01T00:00:00.000Z] ERROR forged\n');
+  child.stdout.emit('data', 'WARN a\u2028[2000-01-01T00:00:00.000Z] ERROR b\u2029[2000-01-01T00:00:00.000Z] ERROR c\r\n');
+  child.stderr.emit('data', 'x\u0085y\u001b[2Jz\u0000\n\r\n \r \n');
+  assert.deepEqual(h.logs, [
+    ['INFO', 'taskbar: harmless [2000-01-01T00:00:00.000Z] ERROR forged'],
+    ['WARN', 'taskbar: a [2000-01-01T00:00:00.000Z] ERROR b [2000-01-01T00:00:00.000Z] ERROR c'],
+    ['INFO', 'taskbar: x y [2Jz '],
+  ]);
+  for (const [, msg] of h.logs) assert.doesNotMatch(msg, /[\r\n\u0085\u2028\u2029\u0000-\u001f]/);
+});
