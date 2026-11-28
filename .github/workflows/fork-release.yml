@@ -47,6 +47,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # predist (npm run dist) builds taskbar-battery.exe; on CI the test fails if it wasn't built.
+      - name: Self-test taskbar-battery.exe
+        run: node --test test/taskbar-exe.test.js
+
       - name: Build and upload the branded installer
         shell: pwsh
         env:

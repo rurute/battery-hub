@@ -14,3 +14,5 @@ src/main/local-tools.js
 .claude/
 src/main/system-batteries.exe
 src/main/ble-batteries.exe
+# fork: taskbar battery levels
+src/main/taskbar-battery.exe
