@@ -1,10 +1,13 @@
 // fork: taskbar battery levels (fork Issue #16). `taskbar-battery.exe --self-test` runs this table and
 // prints "PASS <count>", or one "FAIL <name>: <reason>" line per failing case; the exit code is 0 / 1.
 // The Policy cases are inzone-auto-switch's TaskbarOverlayPolicyTests, with the same inputs and
-// expectations (Disabled_Hides is dropped; NoLevel_Hides became NoItems_Hides).
+// expectations (Disabled_Hides is dropped; NoLevel_Hides became NoItems_Hides). The Renderer cases follow
+// inzone-auto-switch's BatteryOverlayRendererTests and look at the bitmap's real pixels; they use the
+// icons in --assets (assets/taskbar).
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 
 namespace BatteryHubTaskbar
 {
@@ -73,6 +76,20 @@ namespace BatteryHubTaskbar
             add("ParseLine_ClampsLevel", ParseLine_ClampsLevel);
             add("ParseLine_NotJson", ParseLine_NotJson);
 
+            using (var icons = new IconSet(assetsDir))
+            {
+                add("Render_TwoItemsWiderThanOne", () => Render_TwoItemsWiderThanOne(icons));
+                add("Render_LowHasOrange", () => Render_LowHasOrange(icons));
+                add("Render_NotLowHasNoOrange", () => Render_NotLowHasNoOrange(icons));
+                add("Render_ChargingWiderThanNotCharging", () => Render_ChargingWiderThanNotCharging(icons));
+                add("IconSet_UnknownNameIsPlug", () => IconSet_UnknownNameIsPlug(assetsDir, icons));
+
+                return RunCases(cases);
+            }
+        }
+
+        private static int RunCases(List<KeyValuePair<string, Action>> cases)
+        {
             var failed = 0;
             foreach (var c in cases)
             {
@@ -340,6 +357,118 @@ namespace BatteryHubTaskbar
         private static void ParseLine_NotJson()
         {
             True(Protocol.ParseLine("not json") == null, "should return null");
+        }
+
+        // --- Renderer and IconSet (from inzone-auto-switch's BatteryOverlayRendererTests) ---
+
+        private static readonly Color DarkOrange = Color.FromArgb(0xFF, 0x9F, 0x43);
+
+        private static OverlayItem Item(string icon, int level, bool charging, bool low)
+        {
+            return new OverlayItem { Icon = icon, Level = level, Charging = charging, Low = low };
+        }
+
+        private static void Render_TwoItemsWiderThanOne(IconSet icons)
+        {
+            using (var one = Renderer.Render(new[] { Item("mouse", 82, false, false) }, false, Dpi, icons))
+            using (var two = Renderer.Render(new[] { Item("mouse", 82, false, false), Item("keyboard", 45, false, false) }, false, Dpi, icons))
+            {
+                True(two.Width > one.Width, "two items (" + two.Width + ") should be wider than one (" + one.Width + ")");
+                Equal(32, one.Height, "height at 96 dpi");
+            }
+        }
+
+        private static void Render_LowHasOrange(IconSet icons)
+        {
+            using (var bitmap = Renderer.Render(new[] { Item("headset", 18, false, true) }, false, Dpi, icons))
+            {
+                True(HasNear(bitmap, DarkOrange), "a low item should have #FF9F43 pixels");
+
+                // The icon (the first 1 + 16 columns at 96 dpi) keeps its colour. Its PNG has soft edges and
+                // no fully opaque pixels at 16 px, so look at the mostly opaque ones there.
+                True(HasNear(bitmap, Color.White, 128, 0, 17), "the icon should still be white");
+                True(!HasNear(bitmap, DarkOrange, 128, 0, 17), "the icon should not turn orange");
+            }
+        }
+
+        private static void Render_NotLowHasNoOrange(IconSet icons)
+        {
+            using (var bitmap = Renderer.Render(new[] { Item("headset", 18, false, false) }, false, Dpi, icons))
+            {
+                True(!HasNear(bitmap, DarkOrange), "an item that isn't low should have no #FF9F43 pixels");
+                True(HasNear(bitmap, Color.White), "should have white pixels");
+            }
+        }
+
+        private static void Render_ChargingWiderThanNotCharging(IconSet icons)
+        {
+            using (var plain = Renderer.Render(new[] { Item("mouse", 82, false, false) }, false, Dpi, icons))
+            using (var charging = Renderer.Render(new[] { Item("mouse", 82, true, false) }, false, Dpi, icons))
+            {
+                True(charging.Width > plain.Width, "charging (" + charging.Width + ") should be wider than not charging (" + plain.Width + ")");
+            }
+        }
+
+        private static void IconSet_UnknownNameIsPlug(string assetsDir, IconSet icons)
+        {
+            True(!string.IsNullOrEmpty(assetsDir) && Directory.Exists(assetsDir), "needs --assets <assets/taskbar>, got: " + (assetsDir ?? "(none)"));
+
+            var unknown = icons.Get("no-such-icon", true, 16);
+            var plug = icons.Get("plug", true, 16);
+            var mouse = icons.Get("mouse", true, 16);
+
+            True(unknown != null && plug != null && mouse != null, "the icons should load");
+            True(SamePixels(unknown, plug), "an unknown name should give the plug icon");
+            True(!SamePixels(mouse, plug), "mouse should not be the plug icon");
+        }
+
+        // Opaque pixels only (edges are blended), each channel within the tolerance, as in inzone's tests.
+        private static bool HasNear(Bitmap bitmap, Color expected)
+        {
+            return HasNear(bitmap, expected, 255, 0, bitmap.Width);
+        }
+
+        // Pixels with at least minAlpha in the columns [fromX, toX).
+        private static bool HasNear(Bitmap bitmap, Color expected, int minAlpha, int fromX, int toX)
+        {
+            const int tolerance = 40;
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                for (var x = Math.Max(0, fromX); x < Math.Min(bitmap.Width, toX); x++)
+                {
+                    var actual = bitmap.GetPixel(x, y);
+                    if (actual.A >= minAlpha
+                        && Math.Abs(expected.R - actual.R) <= tolerance
+                        && Math.Abs(expected.G - actual.G) <= tolerance
+                        && Math.Abs(expected.B - actual.B) <= tolerance)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool SamePixels(Bitmap a, Bitmap b)
+        {
+            if (a.Width != b.Width || a.Height != b.Height)
+            {
+                return false;
+            }
+
+            for (var y = 0; y < a.Height; y++)
+            {
+                for (var x = 0; x < a.Width; x++)
+                {
+                    if (a.GetPixel(x, y).ToArgb() != b.GetPixel(x, y).ToArgb())
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
         }
     }
 }
