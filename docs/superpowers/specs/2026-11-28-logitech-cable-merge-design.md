@@ -4,16 +4,18 @@
 
 G913 TKL のように、ケーブル（`046d:c343`）でも Lightspeed レシーバー（`046d:c547` のスロット）でもつながる Logitech の HID++ 機器は、今はつなぎ方ごとに別のカードになる。これを 1 枚のカードにまとめ、つなぎ方が変わっても同じカード（名前・設定・履歴）のまま読めるようにする。
 
-本家の Issue battery-hub/battery-hub#243 の 2 つめ（G903 を充電ケーブルにつなぐと別の機器として出る）への答え。担当者は「for now」「noted」と書いただけで、誰も取りかかっていない。まず fork で作り、自分の G913 TKL で確かめる。本家に出すかは、そのあと担当者に聞いてから決める（この文書の範囲外）。
+本家の Issue battery-hub/battery-hub#243 の 2 つめ（G903 を充電ケーブルにつなぐと別の機器として出る）への答え。担当者の返事は「for now」「noted」で、取りかかるとは書いていない。まず fork で作り、自分の G913 TKL で確かめる。本家に出すかは、そのあと担当者に聞いてから決める（この文書の範囲外）。
+
+**この変更では #243 の報告者の G903 はまとまらない（HUMAN の決定）。** 報告者の G903 は Lightspeed レシーバー `046d:c539` につながっている。fork がレシーバーを機器ごとに分けるのは `c547` だけ（`src/main/hid/drivers/lightspeed.js` の `RECEIVER_PIDS`）で、`c539` は「USB Receiver」というレシーバー単位のカードのままになる。下の設計はレシーバー本体には問い合わせないので、その G903 は対象外。対象は、`c547` で機器ごとに分けた子機と、ケーブルで直接つないだ機器だけ。`c539` などに広げるかは、本家に出すときに担当者と相談する。
 
 ## 実機で分かっていること（2026-11-28、G913 TKL）
 
 読み取りだけの HID++ の問い合わせで確かめた。
 
-- 機能 0x0003（Device Information）の `getDeviceInfo`（function 0）の返事は、ケーブル経由（`c343`、device index `0xFF`）とレシーバー経由（`c547`、スロット 1）で 20 バイトすべて同じだった: `11 xx 02 0b 05 71 b8 21 11 00 0e b3 5f 40 8e c3 43 04 00 00`。
+- 機能 0x0003（Device Information）の `getDeviceInfo`（function 0）の返事は、ケーブル経由（`c343`、device index `0xFF`）とレシーバー経由（`c547`、スロット 1）で、2 バイト目（device index。ケーブルは `ff`、レシーバーは `01`）以外の 19 バイトが同じだった。ケーブル: `11 ff 02 0b 05 71 b8 21 11 00 0e b3 5f 40 8e c3 43 04 00 00`、レシーバー: `11 01 02 0b 05 71 b8 21 11 00 0e b3 5f 40 8e c3 43 04 00 00`（`02` は 0x0003 の feature index、`0b` は function 0 と software id）。
   - params: `[0]` entity 数 `05`、`[1..4]` unit ID `71b82111`、`[5..6]` transport `000e`、`[7..12]` modelId `b35f 408e c343`（Bluetooth PID / Lightspeed の無線 PID / USB PID）、`[13]` extended model `04`。
 - ケーブルを挿しているあいだ、キーボードはレシーバーのスロット 1 から消える（返事がない）。2 つの経路が同時に読める状態にはならなかった。
-- ケーブル側は device index `0xFF` でも `1`〜`6` でも同じ返事をした。
+- ケーブル側は device index `0xFF` でも `1`〜`6` でも答えた（返事の 2 バイト目は問い合わせた index で、残りは同じ）。
 - G502 X（スロット 2）: unit ID `7509ffd9`、modelId `409f c098 0000`。ケーブル側は確かめていない。
 - シリアル番号（0x0003 の function 2）は両方とも空。
 - ほかの機種は確かめていない。
@@ -39,7 +41,7 @@ G913 TKL のように、ケーブル（`046d:c343`）でも Lightspeed レシー
 
 - モジュールに `needsIdentify: true` と `identify(logicalDevice)` を足す。
 - `identify` は、読み取りと同じ channel（`channelOf`）で、読み取りと同じように `serialize(channel.path, …)` の中で問い合わせる。
-  - 問い合わせ先の device index: `logicalDevice.receiver` があればそのスロット。なければ `0xFF`。レシーバー本体（product 名に receiver を含み、`receiver` を持たないもの）は問い合わせず `null` を返す。
+  - 問い合わせ先の device index: `logicalDevice.receiver` があればそのスロット。なければ `0xFF`。レシーバー本体（product 名に receiver を含み、`receiver` を持たないもの。`c539` のように機器ごとに分けていないレシーバーのカードも含む）は問い合わせず `null` を返す。
   - root の `getFeature(0x0003)` で index を取り、`getDeviceInfo`（function 0）を呼ぶ。
   - 返す値: `logi:<modelId 12 桁>:<unit ID 8 桁>`（小文字 16 進）。modelId はケーブルでも Lightspeed でも同じ値だったので、別の型番の偶然の一致を防ぐために入れる。
   - `null` を返す場合（機器が答えたが根拠がない）: 0x0003 がない（index 0）、unit ID がすべて 0 か すべて `ff`。この `null` は poller が覚えるので、次からは問い合わせない（今の `identities` の動き）。
@@ -52,9 +54,9 @@ G913 TKL のように、ケーブル（`046d:c343`）でも Lightspeed レシー
 
 ### テスト
 
-- `identify` が、実機の返事（上の 20 バイト）から `logi:b35f408ec343:71b82111` を返す。ケーブル（`0xFF`）とレシーバーのスロットの両方。
+- `identify` が、実機の返事から `logi:b35f408ec343:71b82111` を返す。ケーブル（device index `0xff` で問い合わせ、返事 `11 ff 02 0b 05 71 b8 21 11 …`）とレシーバーのスロット 1（`01` で問い合わせ、返事 `11 01 02 0b 05 71 b8 21 11 …`）の両方。root の `getFeature(0x0003)` の返事は `11 <index> 00 0b 02 …`（feature index `02`、実機の値）。
 - 0x0003 がない、unit ID が 0 のときに `null`。答えがないときに例外。
-- レシーバー本体には問い合わせない。
+- レシーバー本体（機器ごとに分けていない `c539` のカードを含む）には問い合わせず `null`。
 - ケーブルのカードとレシーバーの子機のカードが、同じ identity で 1 枚にまとまる（poller か identity のテスト）。
 
 ### 実機での確認
