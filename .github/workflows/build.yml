@@ -41,6 +41,10 @@ jobs:
       - name: Build the electron-builder installer
         run: npm run dist -- --publish never
 
+      # predist (npm run dist) builds taskbar-battery.exe; on CI the test fails if it wasn't built.
+      - name: Self-test taskbar-battery.exe
+        run: node --test test/taskbar-exe.test.js
+
       - name: Build the branded installer
         run: npm run installer
 

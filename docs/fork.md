@@ -39,6 +39,7 @@
 | `.github/workflows/fork-release.yml` | タグ `v*-fork.*` で fork の Release を出す | 下の「fork のリリース」 |
 | `scripts/fork-version.js`（`test/fork-version.test.js`） | CI の中だけで `package.json` の `version` と `build.publish` を fork 向けに書き換える | `npm test` |
 | `src/main/diagnostics.js` の `isNewer`（`// fork:`） | 診断の版数比較で `-fork.N` を無視する（`2.0.7-fork.1` を本家 `2.0.7` と同じとみなす） | `npm test`。fork 版の診断で Version が通る |
+| タスクバーの残量表示（fork Issue #16）: `src/main/taskbar.js` `src/main/taskbar-model.js` `src/main/batteries/taskbar/` `scripts/build-taskbar-battery.js` `scripts/make-taskbar-icons.js` `assets/taskbar/` `src/renderer/i18n-fork.js`（テスト `test/taskbar.test.js` `test/taskbar-model.test.js` `test/taskbar-icons.test.js` `test/taskbar-wiring.test.js` `test/taskbar-exe.test.js`）。本家のファイルへのつなぎ（`fork:`）は `src/main/main.js` 2 行、`scripts/build-batteries.js` 1 行、`src/renderer/index.html` 2 か所、`src/renderer/i18n-strings.js` 1 行、`.gitignore` 1 か所（`# fork:` の行と exe の行） | 設定で ON にすると、Windows 11 のタスクバーのトレイのすぐ左に、接続中のデバイスごとに絵と残量を並べて出す（既定は OFF） | `npm test`。Windows では `src\main\taskbar-battery.exe --self-test --assets assets\taskbar`（CI の `build.yml` と `fork-release.yml` でも走る） |
 | `docs/superpowers/` の spec と plan、この `docs/fork.md` | 設計と運用の記録 | — |
 
 ## 止めているワークフロー
