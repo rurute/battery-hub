@@ -35,3 +35,4 @@ if (!(fs.existsSync(BLE_OUT) && fs.statSync(BLE_OUT).mtimeMs >= fs.statSync(BLE_
     console.log('build-batteries: could not build the Bluetooth LE reader, skipping it');
   }
 }
+require('./build-taskbar-battery'); // fork: taskbar battery levels (fork Issue #16)
