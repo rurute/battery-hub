@@ -235,7 +235,7 @@ git commit -m "feat(fork): タスクバーの表示のプログラムを起こ�
 
 - [ ] **Step 1: 自己テストの表を書く**（`SelfTest.cs`）。inzone の `TaskbarOverlayPolicyTests` の 13 件（`Normal_PlacesLeftOfTrayCentered`、`NoLevel_Hides` → `NoItems_Hides`、`NullProbe_HidesAsUnavailable`、`ProbeError_HidesAndWarnsOnce`、`RecoversAfterError_ShowsAndInfoOnce`、`NoSpace_HidesAndWarnsOnce`、`ExactlyEnoughSpace_Shows`、`TaskbarHidden_HidesWithoutLog`、`Fullscreen_HidesWithoutLog`、`FullscreenWhileWarned_DoesNotResetWarning`、`Dpi144_ScalesMarginAndGap`、`Dpi144_GapIsScaled`。`Disabled_Hides` は除く）を、同じ入力と期待値で移す。`Protocol.ParseLine` の件も足す: `{"devices":[{"icon":"mouse","level":82,"charging":false,"low":false},{"icon":"headset","level":18,"charging":true,"low":true}]}` → 2 件で値が合う。`{"devices":[]}` → 0 件。`{"devices":[{"icon":"","level":5,"charging":false,"low":true},{"icon":"pen","level":5,"charging":false,"low":true}]}` → `pen` の 1 件。`{"devices":[{"icon":"mouse","level":150,"charging":false,"low":false}]}` → `Level == 100`。`not json` → `null`。
 
-- [ ] **Step 2: Node から走らせるテストを書く**（`test/taskbar-exe.test.js`）: `process.platform === 'win32'` で `src/main/taskbar-battery.exe` があるときだけ、`--self-test --assets <repo>/assets/taskbar` を走らせ、終了コード 0 と `/^PASS \d+/` を確かめる。exe がなく、環境変数 `CI` が `true` なら失敗にする（CI が自己テストを飛ばして通らないように）。それ以外は `t.skip('needs Windows and taskbar-battery.exe')`。
+- [ ] **Step 2: Node から走らせるテストを書く**（`test/taskbar-exe.test.js`）: `process.platform === 'win32'` で `src/main/taskbar-battery.exe` があるときだけ、`--self-test --assets <repo>/assets/taskbar` を走らせ、終了コード 0 と `/^PASS \d+/` を確かめる。Windows で exe がなく、環境変数 `CI` が `true` なら失敗にする（Windows の CI が自己テストを飛ばして通らないように。spec のとおり、Windows でないときはスキップする）。それ以外は `t.skip('needs Windows and taskbar-battery.exe')`。
 
 - [ ] **Step 3: 失敗を確かめる（WSL から）**
 
@@ -392,3 +392,4 @@ S / H: なし。
 
 - レビュアは、Windows でのコンパイル、Electron での絵の作成、WSL からの相互運用、実機のタスクバーでの動きを確かめていない。
 - APPROVE は、計画が spec と整合しているというレビュアの判定である。実装済み・テスト成功・HUMAN の承認のどれでもない。
+- 実装中の変更: Task 4 Step 2 の CI の条件を Windows に限った（HUMAN の決定、2026-11-28。spec のテストの節との食い違いを解くため）。
