@@ -183,3 +183,22 @@ fork の手動ビルド（`build.yml` を Actions で走らせる、memory の p
 4. もともと 2 枚あった場合に、1 枚にまとまる。
 
 確認は WSL から `/mnt/c/Users/rurut/AppData/Roaming/battery-hub/` のカードの保存ファイルとログ（`battery-hub.log`）も読む。結果（通った・通らなかった・試していない）をそのまま HUMAN に報告する。
+
+## レビューの記録
+
+skill `cross-model-spec-plan-review` で、fresh な `codex exec`（read-only）に 3 回見せた。要求源は承認済みの spec（HEAD `9594aec` の版。HUMAN の承認「承認」、2026-11-28）。どの回も採用ゲート（0・A〜D）は満たし、MCP の起動ログは `clean`（設定済みの MCP サーバは 0 件）。
+
+| 回 | run directory | 対象 HEAD | 比較元 | verdict |
+|---|---|---|---|---|
+| 1 | `20261128-163458-plan` | `239dfc8` | なし（新規） | CHANGES_REQUESTED |
+| 2 | `20261128-163700-plan` | `090add8` | `239dfc8` | CHANGES_REQUESTED |
+| 3 | `20261128-163837-plan` | `3deeec8` | `090add8` | APPROVE |
+
+直した D:
+
+- F1（1 回目）: Task 2 のテストが、poller がテストファイル全体で覚える identity を共有してしまい、答えない子機の場合を確かめられない。→ テストごとに channel の path を変え、子機に `identify` が呼ばれたことを確かめるようにした。
+- F2（2 回目）: poller は `detectDriver` を読み込み時に取り出すので、テストの中で差し替えても届かない。→ poller を読み込む前に、差し替えのきく `driverImpl` へ転送する偽の `drivers` にした。
+
+S / H: なし。
+
+残る限界: レビュアは実機の値を独立には確かめていない。全テストの実行（変更前 pass 530）とビルドは確かめていない（read-only のため）。APPROVE は文書が要求源と整合しているという判定で、実装済み・テスト成功・HUMAN の承認のどれでもない。
