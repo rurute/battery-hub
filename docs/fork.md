@@ -20,14 +20,15 @@
 
 ### 本家に入ったもの
 
-- SONY INZONE Buds（本家 PR #199、merge 済み）。次の取り込みで本家の版にそろえる。
+取り込みで本家の版にそろえたので、fork と本家に差はない。
+
+- SONY INZONE Buds（本家 PR #199）
+- Logitech Lightspeed の 1 レシーバー複数台（本家 PR #230、本家 2.0.8）
+- ELECOM BlueLED Mouse の Bluetooth 読み取り（本家 PR #239、本家 2.0.8）
 
 ### 本家に PR 中のもの
 
-- Logitech Lightspeed の 1 レシーバー複数台（本家 PR #230）。`src/main/hid/drivers/lightspeed.js`、`hidpp.js`、`identity.js`、`main.js`、`poller.js` など。
-- ELECOM BlueLED Mouse の Bluetooth 読み取り（本家 PR #239）。`src/main/hid/drivers/elecom.js`、`get-input-report.ps1` など。
-
-本家に入ったら、取り込みのときに本家の版を採り、この節から「本家に入ったもの」に移す。
+いまはない。本家に入ったら、取り込みのときに本家の版を採り、この節から「本家に入ったもの」に移す。
 
 ### fork だけのもの
 
@@ -44,10 +45,10 @@
 
 fork のリポジトリの設定で止めている。設定なので、本家を取り込んでも戻らない。ファイルは消さない（消すと本家がそのファイルを変えるたびに衝突する）。
 
-- `triage.yml`: 本家の Issue ボット。fork の Issue にラベルやコメントを付けないように止めている（GitHub が fork では最初から止めている）。
+- `triage.yml`: 本家の Issue ボット。fork の Issue にラベルやコメントを付けないように止めている（`gh workflow disable triage.yml -R rurute/battery-hub`）。2.0.9 の取り込みのあと、手で止めるまで有効になっていた。
 - `release.yml`: 本家のリリース。トリガーの `v*` が fork のタグにも当たり、本家の Releases に出そうとするので止めている（`gh workflow disable release.yml -R rurute/battery-hub`）。
 
-本家の取り込みでワークフローが増えたら、fork で動いてよいかを見て、だめなら止める。
+本家の取り込みでワークフローが増えたら、fork で動いてよいかを見て、だめなら止める。取り込みのあと、`gh workflow list -R rurute/battery-hub --all` で、止めたものが `disabled_manually` のままかも確かめる。
 
 ## 本家の取り込み
 
