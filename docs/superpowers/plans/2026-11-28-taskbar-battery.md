@@ -4,7 +4,7 @@
 
 **Goal:** 設定で ON にすると、Windows 11 のタスクバーのトレイのすぐ左に、接続中のデバイスごとに「種類の絵 + 残量」を並べて出す（fork だけの機能、fork Issue #16）。
 
-**Architecture:** Node の `src/main/taskbar-model.js`（純粋な関数）が、保存されたデバイスから「出す一覧」を作り、1 行の文字列にする。`src/main/taskbar.js` が C# の `taskbar-battery.exe` を起こし、その行を標準入力へ送る。exe は inzone-auto-switch のタスクバー表示（最前面のレイヤード窓、`TrayNotifyWnd`、UI Automation）を C# 5 に移したもので、位置の計算・出すか隠すかの判定・描画をすべて行う。デバイスや設定の変化は、`store` の書き込み関数を `taskbar.js` が包んで受け取る。こうして `main.js` のつなぎを 3 行に抑える。
+**Architecture:** Node の `src/main/taskbar-model.js`（純粋な関数）が、保存されたデバイスから「出す一覧」を作り、1 行の JSON にする。`src/main/taskbar.js` が C# の `taskbar-battery.exe` を起こし、その行を標準入力へ送る。exe は inzone-auto-switch のタスクバー表示（最前面のレイヤード窓、`TrayNotifyWnd`、UI Automation）を C# 5 に移したもので、位置の計算・出すか隠すかの判定・描画をすべて行う。デバイスや設定の変化は、`store` の書き込み関数を `taskbar.js` が包んで受け取る。終了は Electron の `will-quit` で受ける。こうして `main.js` のつなぎを 2 行に抑える。
 
 **Tech Stack:** Node（`node:test`）、Electron 45、C# 5 / .NET Framework 4（Windows に付いている `csc.exe`、WinForms、GDI+、`UIAutomationClient`）。
 
@@ -25,10 +25,10 @@
 
 ## 決めたこと（spec が builder に任せた所）
 
-- **つなぎ方**: spec が並べた個々のつなぎ（`broadcast`、`setCardsChangedHandler`、並べ替え・隠す・絵の IPC、`settings:set`）の代わりに、`taskbar.start({ store, logLine })` が `store` の書き込み関数（`upsertDevice` `removeDevice` `mergeDevices` `moveDevice` `reorderDevices` `setSettings`）を包み、呼ばれたら表示を更新する。どのモジュールも `store` をモジュールのまま使っている（`const store = require('./store')`）ので、全部の変化を拾える。`main.js` へのつなぎは、`require`、起動、終了の 3 行で済む。
+- **つなぎ方**: spec が並べた個々のつなぎ（`broadcast`、`setCardsChangedHandler`、並べ替え・隠す・絵の IPC、`settings:set`）の代わりに、`taskbar.start({ store, logLine, app })` が `store` の書き込み関数（`upsertDevice` `removeDevice` `mergeDevices` `moveDevice` `reorderDevices` `setSettings`）を包み、呼ばれたら表示を更新する。どのモジュールも `store` をモジュールのまま使っている（`const store = require('./store')`）ので、全部の変化を拾える。終了は `app.on('will-quit', stop)` を `taskbar.start` の中で登録して受ける。`quitApp` を通らない終わり方（`autoUpdater.quitAndInstall()` は `app.quit()` を呼ぶ）でも止まる。`main.js` へのつなぎは、`require` と起動の 2 行で済む。
 - **更新はまとめる**: 包んだ関数は `refresh()` を呼ぶ。`refresh()` は 50ms のタイマーでまとめ、`store.getDevices()`（履歴ごと複製するので重い）を 1 回だけ呼ぶ。
-- **やりとりの形**: JSON ではなく 1 行の文字列。C# 5 で JSON の読み取りを持ち込まないため。
-  - Node → exe: `<icon>,<level>,<charging 0|1>,<low 0|1>` を `;` でつなぐ。例 `mouse,82,0,0;headset,18,1,1`。空の行は「何も出さない」。
+- **やりとりの形**（spec のとおり、1 行 1 つの JSON）:
+  - Node → exe: `{"devices":[{"icon":"mouse","level":82,"charging":false,"low":false}]}`。`devices` が空なら「何も出さない」。C# は .NET Framework 4 の `DataContractJsonSerializer`（`System.Runtime.Serialization.dll`）で読む。
   - exe → Node（標準出力）: `WARN <文>`、`INFO <文>`、`ERROR <文>` の 1 行ずつ。
 - **exe の引数**: `--parent <pid> --assets <絵のフォルダ>`。確認用に `--self-test`。
 - **古い残量**: 「この起動のあとに読めた」は `lastReadingAt >= taskbar.start() を呼んだ時刻` で決める。「読めない状態」は `failedReads >= 3`（`app.js` の `READS_BEFORE_REPORT`。窓のスクリプトなので値を写す）。`'waiting for headset update'` は、新しい読み取りがないので、前の条件で外れる。
@@ -38,11 +38,11 @@
 
 ## Review Focus
 
-- exe が起動直後に落ち続ける（DLL や Windows の版の違い）: 起動し直しは間を広げ、5 回であきらめ、ログに ERROR を 1 回書く。設定を OFF→ON にすると、もう一度試す（Task 3 のテスト）。
+- exe が起動直後に落ち続ける（DLL や Windows の版の違い）: 起動し直しは間を広げ、5 回目に落ちたらあきらめ、ログに ERROR を 1 回書く。設定を OFF→ON にすると、もう一度試す（Task 3 のテスト）。
 - 標準入力への書き込みで、exe が先に終わっていた（EPIPE）: 例外を投げず、`stdin` の `error` を受けて「終わった」と同じに扱う（Task 3 のテスト）。
 - 読み取りが同時に何台も届き、`store` の書き込みが立て続けに起きる: `getDevices()` は 50ms に 1 回だけ（Task 3 のテスト）。
 - 保存した絵の名前が知らないもの（昔の版の絵文字、手で書き換えた設定）: `icons.js` と同じ決め方で推定に戻る。絵のファイルがない名前が exe に届いたら `plug` を使う（Task 1 と Task 5 の自己テスト）。
-- 残量の値が範囲外（`-1`、`101`、小数）: Node が 0〜100 の整数に丸めて送る（Task 1 のテスト）。exe は数字でない欄を含む項目を飛ばす（Task 4 の自己テスト）。
+- 残量の値が範囲外（`-1`、`101`、小数）: Node が 0〜100 の整数に丸めて送る（Task 1 のテスト）。exe は読めない行を捨てて前の表示のままにし、範囲外の値を収める（Task 4 の自己テスト）。
 
 ---
 
@@ -60,7 +60,7 @@
   - `iconName(device) -> string`（`icons.js` の `deviceIconName` と同じ結果）
   - `visibleDevices(devices: { [id]: device }, settings: { sortMode }, sinceMs: number) -> device[]`
   - `itemsFor(devices, settings, sinceMs) -> Array<{ icon: string, level: number, charging: boolean, low: boolean }>`
-  - `lineFor(items) -> string`（例 `mouse,82,0,0;headset,18,1,1`。0 件は `''`）
+  - `lineFor(items) -> string`（`JSON.stringify({ devices: items })`。0 件は `{"devices":[]}`）
 
 - [ ] **Step 1: 失敗するテストを書く**（`test/taskbar-model.test.js`。デバイスは `{ id, product, driverId, customIcon, hidden, online, order, failedReads, lastReading: { capacity, charging }, lastReadingAt }` の形で作る。`SINCE = 1000`）
 
@@ -75,7 +75,7 @@ test('shows only devices read since start, online, not hidden, readable', () => 
     once:    dev({ id: 'once', capacity: 50, at: 2000, failedReads: 2 }),
     none:    dev({ id: 'none', capacity: null, at: 2000 }),
   };
-  assert.deepEqual(visibleDevices(d, { sortMode: 'urgent' }, SINCE).map((x) => x.id).sort(), ['once', 'ok']);
+  assert.deepEqual(visibleDevices(d, { sortMode: 'urgent' }, SINCE).map((x) => x.id).sort(), ['ok', 'once']);
 });
 test('urgent order matches the cards: draining first, then charging', () => {
   const d = { c10: dev({ id: 'c10', capacity: 10, charging: true, at: 2000 }), d80: dev({ id: 'd80', capacity: 80, at: 2000 }) };
@@ -89,6 +89,14 @@ test('low is 20 or below, also while charging', () => {
   const lvl = (capacity, charging = false) => itemsFor({ x: dev({ id: 'x', capacity, charging, at: 2000 }) }, {}, SINCE)[0].low;
   assert.equal(lvl(20), true); assert.equal(lvl(21), false); assert.equal(lvl(0), true); assert.equal(lvl(15, true), true);
 });
+test('low ignores the notification thresholds', () => {
+  const low = (capacity, alertThreshold, notifyThreshold) =>
+    itemsFor({ x: dev({ id: 'x', capacity, at: 2000, alertThreshold }) }, { notifyThreshold }, SINCE)[0].low;
+  assert.equal(low(15, undefined, 10), true);   // below 20 even if notifications fire at 10
+  assert.equal(low(25, undefined, 30), false);  // above 20 even if notifications fire at 30
+  assert.equal(low(25, 40, 20), false);         // a device's own alert level doesn't count
+  assert.equal(low(20, 5, 5), true);
+});
 test('levels are clamped to whole numbers 0..100', () => {
   const lv = (capacity) => itemsFor({ x: dev({ id: 'x', capacity, at: 2000 }) }, {}, SINCE)[0].level;
   assert.equal(lv(-1), 0); assert.equal(lv(101), 100); assert.equal(lv(49.6), 50);
@@ -100,8 +108,9 @@ test('icon names match the window', () => {
   assert.equal(iconName({ customIcon: 'nonsense', product: 'X' }), 'plug');
 });
 test('line format', () => {
-  assert.equal(lineFor([{ icon: 'mouse', level: 82, charging: false, low: false }, { icon: 'headset', level: 18, charging: true, low: true }]), 'mouse,82,0,0;headset,18,1,1');
-  assert.equal(lineFor([]), '');
+  assert.equal(lineFor([{ icon: 'mouse', level: 82, charging: false, low: false }, { icon: 'headset', level: 18, charging: true, low: true }]),
+    '{"devices":[{"icon":"mouse","level":82,"charging":false,"low":false},{"icon":"headset","level":18,"charging":true,"low":true}]}');
+  assert.equal(lineFor([]), '{"devices":[]}');
 });
 ```
 
@@ -166,9 +175,9 @@ git commit -m "feat(fork): タスクバー用のデバイスの絵を作る"
 **Interfaces:**
 - Consumes: Task 1 の `itemsFor` と `lineFor`。
 - Produces:
-  - `start({ store, logLine, spawn?, exists?, platform?, exePath?, assetsDir?, now?, setTimer?, clearTimer? }) -> void`: `store` の書き込み関数を包み、最初の `refresh()` を予約する。既定は `spawn = child_process.spawn`、`exists = fs.existsSync`、`platform = process.platform`、`exePath = path.join(__dirname, 'taskbar-battery.exe')`、`assetsDir = path.join(__dirname, '..', '..', 'assets', 'taskbar')`。
+  - `start({ store, logLine, app, spawn?, exists?, platform?, exePath?, assetsDir?, now?, setTimer?, clearTimer? }) -> void`: `store` の書き込み関数を包み、`app.on('will-quit', stop)` を登録し、最初の `refresh()` を予約する。既定は `spawn = child_process.spawn`、`exists = fs.existsSync`、`platform = process.platform`、`exePath = path.join(__dirname, 'taskbar-battery.exe')`、`assetsDir = path.join(__dirname, '..', '..', 'assets', 'taskbar')`。
   - `refresh() -> void`: 50ms でまとめて更新する。
-  - `stop() -> void`: exe を止め（`stdin.end()` のあと `kill()`）、タイマーを消す。終了時に呼ぶ。
+  - `stop() -> void`: exe を止め（`stdin.end()` のあと `kill()`）、タイマーを消す。`will-quit` で呼ばれる。
 
 - [ ] **Step 1: 失敗するテストを書く**（`test/taskbar.test.js`）。偽物を使う。`spawn` は `EventEmitter` に `stdin: { write, end, on }`、`stdout: EventEmitter`、`kill()` を付けたものを返して記録する。タイマーは手で進める。`store` は `getDevices`、`getSettings`、包まれる関数を持つ偽物。
 
@@ -177,11 +186,12 @@ test('off by default: no exe is started');                 // settings without t
 test('turning it on starts the exe with --parent and --assets, and sends the line');
 test('the same line is not sent twice; a changed line is sent');
 test('turning it off stops the exe');
+test('app will-quit stops the exe');                       // fake app is an EventEmitter
 test('store writes in a burst read the devices once');      // 10 upsertDevice calls → getDevices once after the timer
 test('wrapped store functions return what the originals return');
 test('exe missing or not Windows: never spawns, logs INFO once, no throw');
-test('exe exits unexpectedly: restarts after 1s, 2s, 4s… and resends the last line');
-test('5 quick exits: gives up and logs ERROR once; off then on tries again');
+test('exe exits unexpectedly: restarts after 1s and resends the last line');
+test('quick exits restart 4 times (1s, 2s, 4s, 8s); the 5th exit gives up and logs ERROR once; off then on tries again');
 test('a run of 60s or more resets the crash count');
 test('stdin error (EPIPE) is treated like an exit, not thrown');
 test('stdout WARN/INFO/ERROR lines go to logLine with the same level, prefixed "taskbar: "');
@@ -194,7 +204,7 @@ test('stdout WARN/INFO/ERROR lines go to logLine with the same level, prefixed "
 Run: `node --test test/taskbar.test.js`
 Expected: FAIL（モジュールがない）
 
-- [ ] **Step 3: `src/main/taskbar.js` を書く**: 有効かどうかは `store.getSettings().taskbarBattery === true`。`spawn(exePath, ['--parent', String(process.pid), '--assets', assetsDir], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })`。標準出力は行に分け、`/^(WARN|INFO|ERROR) (.*)$/` に合えばその段で、合わなければ `INFO` で `logLine` へ書く。起動し直しの間は `1000 * 2 ** (n - 1)` ms。60 秒以上動いたら `n` を 0 に戻す。`n > 5` であきらめる。`spawn` の `error` イベントも「終わった」と同じに扱う。
+- [ ] **Step 3: `src/main/taskbar.js` を書く**: 有効かどうかは `store.getSettings().taskbarBattery === true`。`spawn(exePath, ['--parent', String(process.pid), '--assets', assetsDir], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })`。標準出力は行に分け、`/^(WARN|INFO|ERROR) (.*)$/` に合えばその段で、合わなければ `INFO` で `logLine` へ書く。`n` は続けて落ちた回数。落ちるたびに `n += 1`（その前に、60 秒以上動いていたら `n = 0` に戻す）。`n >= 5` ならあきらめ、それ以外は `1000 * 2 ** (n - 1)` ms 待って起動し直す。`spawn` の `error` イベントも「終わった」と同じに扱う。
 
 - [ ] **Step 4: 通ることを確かめる**
 
@@ -211,34 +221,28 @@ git commit -m "feat(fork): タスクバーの表示のプログラムを起こ�
 ### Task 4: C# の骨組み・判定・自己テスト・ビルド
 
 **Files:**
-- Create: `src/main/batteries/taskbar/Protocol.cs`、`src/main/batteries/taskbar/Policy.cs`、`src/main/batteries/taskbar/SelfTest.cs`、`src/main/batteries/taskbar/Program.cs`（この Task では `--self-test` だけを受ける）、`scripts/build-taskbar-battery.js`、`test/taskbar-exe.test.js`
+- Create: `src/main/batteries/taskbar/Protocol.cs`（`OverlayItem` と JSON の読み取り）、`src/main/batteries/taskbar/Policy.cs`、`src/main/batteries/taskbar/SelfTest.cs`、`src/main/batteries/taskbar/Program.cs`（この Task では `--self-test` だけを受ける）、`scripts/build-taskbar-battery.js`、`test/taskbar-exe.test.js`
 - Modify: `scripts/build-batteries.js`（末尾に `require('./build-taskbar-battery'); // fork:` の 1 行）、`.gitignore`（末尾に `# fork: taskbar battery levels` と `src/main/taskbar-battery.exe` の 2 行。`.gitignore` は行末にコメントを書けないため）
 
 **Interfaces:**
 - Produces（C#、`namespace BatteryHubTaskbar`）:
   - `sealed class OverlayItem { string Icon; int Level; bool Charging; bool Low; }`
-  - `static class Protocol { static List<OverlayItem> ParseLine(string line); }`: 空の行は空のリスト。欄が 4 つでない・数字でない項目は飛ばす。`Level` は 0〜100 に収める。
+  - `static class Protocol { static List<OverlayItem> ParseLine(string line); }`: `DataContractJsonSerializer` で `{"devices":[...]}` を読む（`[DataContract]` の `Message { [DataMember(Name="devices")] List<WireItem> }`、`WireItem` は `icon` `level` `charging` `low`）。読めない行は `null` を返す（呼び出し側は前の表示のまま、`ERROR` を 1 行書く）。`icon` が空の項目は飛ばす。`Level` は 0〜100 に収める。
   - `sealed class TaskbarSnapshot { Rectangle Taskbar; Rectangle Monitor; int TrayLeft; int AppsRight; }`、`sealed class ProbeResult { TaskbarSnapshot Snapshot; string Error; }`
   - `enum HideReason { None, NoItems, TaskbarUnavailable, TaskbarHidden, Fullscreen, NoSpace }`
   - `sealed class Policy { Policy(Action<string, string> log); Decision Evaluate(int itemCount, ProbeResult probe, bool fullscreen, Size overlaySize, int dpi); }`。`Decision { Rectangle? Bounds; HideReason Reason; }`。inzone の `TaskbarOverlayPolicy.Evaluate` の移し替えで、`enabled` と `level` の代わりに `itemCount == 0 → NoItems`。余白 4、間 8（96 dpi 基準）。Warn / Info の文は英語にする: `WARN Can't show taskbar levels: <理由>`、`INFO Taskbar levels can be shown again.`（理由は `overlaps the taskbar buttons` と、位置の取得の失敗の文）。
-  - `scripts/build-taskbar-battery.js`: `build-batteries.js` と同じ条件（Windows で `csc.exe` がある）で、ソースが exe より新しいときだけ、`/target:winexe /optimize+ /platform:anycpu /out:src/main/taskbar-battery.exe src/main/batteries/taskbar/*.cs` に、`System.Drawing.dll` `System.Windows.Forms.dll` と `WPF\UIAutomationClient.dll` `WPF\UIAutomationTypes.dll` `WPF\WindowsBase.dll` の参照を付けて作る。失敗したらログを出してスキップする（例外を外へ投げない）。
+  - `scripts/build-taskbar-battery.js`: ソースのどれかが exe より新しいときだけ、`/nologo /target:winexe /optimize+ /platform:anycpu /out:src/main/taskbar-battery.exe src/main/batteries/taskbar/*.cs` に、`System.Drawing.dll` `System.Windows.Forms.dll` `System.Runtime.Serialization.dll` と `WPF\UIAutomationClient.dll` `WPF\UIAutomationTypes.dll` `WPF\WindowsBase.dll` の参照を付けて作る。コンパイラは、Windows では `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`、WSL（`/mnt/c/Windows/...` に `csc.exe` があり、`wslpath` がある）ではそれを、パスを `wslpath -w` で直して呼ぶ。どちらもなければスキップする。失敗したとき: 環境変数 `CI` が `true` なら終了コード 1 で止める（CI で exe のないインストーラーを作らないため）。それ以外は、ログを出してスキップする（開発中の `npm start` を止めない）。直接 `node scripts/build-taskbar-battery.js` でも走る。
 
-- [ ] **Step 1: 自己テストの表を書く**（`SelfTest.cs`）。inzone の `TaskbarOverlayPolicyTests` の 13 件（`Normal_PlacesLeftOfTrayCentered`、`NoLevel_Hides` → `NoItems_Hides`、`NullProbe_HidesAsUnavailable`、`ProbeError_HidesAndWarnsOnce`、`RecoversAfterError_ShowsAndInfoOnce`、`NoSpace_HidesAndWarnsOnce`、`ExactlyEnoughSpace_Shows`、`TaskbarHidden_HidesWithoutLog`、`Fullscreen_HidesWithoutLog`、`FullscreenWhileWarned_DoesNotResetWarning`、`Dpi144_ScalesMarginAndGap`、`Dpi144_GapIsScaled`。`Disabled_Hides` は除く）を、同じ入力と期待値で移す。`Protocol.ParseLine` の件も足す: `"mouse,82,0,0;headset,18,1,1"` → 2 件で値が合う。`""` → 0 件。`"mouse,x,0,0;pen,5,0,1"` → `pen` の 1 件。`"mouse,150,0,0"` → `Level == 100`。`"mouse,82,0"` → 0 件。
+- [ ] **Step 1: 自己テストの表を書く**（`SelfTest.cs`）。inzone の `TaskbarOverlayPolicyTests` の 13 件（`Normal_PlacesLeftOfTrayCentered`、`NoLevel_Hides` → `NoItems_Hides`、`NullProbe_HidesAsUnavailable`、`ProbeError_HidesAndWarnsOnce`、`RecoversAfterError_ShowsAndInfoOnce`、`NoSpace_HidesAndWarnsOnce`、`ExactlyEnoughSpace_Shows`、`TaskbarHidden_HidesWithoutLog`、`Fullscreen_HidesWithoutLog`、`FullscreenWhileWarned_DoesNotResetWarning`、`Dpi144_ScalesMarginAndGap`、`Dpi144_GapIsScaled`。`Disabled_Hides` は除く）を、同じ入力と期待値で移す。`Protocol.ParseLine` の件も足す: `{"devices":[{"icon":"mouse","level":82,"charging":false,"low":false},{"icon":"headset","level":18,"charging":true,"low":true}]}` → 2 件で値が合う。`{"devices":[]}` → 0 件。`{"devices":[{"icon":"","level":5,"charging":false,"low":true},{"icon":"pen","level":5,"charging":false,"low":true}]}` → `pen` の 1 件。`{"devices":[{"icon":"mouse","level":150,"charging":false,"low":false}]}` → `Level == 100`。`not json` → `null`。
 
-- [ ] **Step 2: Node から走らせるテストを書く**（`test/taskbar-exe.test.js`）: `process.platform === 'win32'` で `src/main/taskbar-battery.exe` があるときだけ、`--self-test` を走らせ、終了コード 0 と `/^PASS \d+/` を確かめる。それ以外は `t.skip('needs Windows and taskbar-battery.exe')`。
+- [ ] **Step 2: Node から走らせるテストを書く**（`test/taskbar-exe.test.js`）: `process.platform === 'win32'` で `src/main/taskbar-battery.exe` があるときだけ、`--self-test --assets <repo>/assets/taskbar` を走らせ、終了コード 0 と `/^PASS \d+/` を確かめる。exe がなく、環境変数 `CI` が `true` なら失敗にする（CI が自己テストを飛ばして通らないように）。それ以外は `t.skip('needs Windows and taskbar-battery.exe')`。
 
 - [ ] **Step 3: 失敗を確かめる（WSL から）**
 
-Run（`csc` は Windows のパスを受ける。`wslpath -w` で変える）:
+Run:
 ```bash
-CSC=/mnt/c/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe
-FW='C:\Windows\Microsoft.NET\Framework64\v4.0.30319'
-SRC=(); for f in src/main/batteries/taskbar/*.cs; do SRC+=("$(wslpath -w "$f")"); done
-"$CSC" /nologo /target:winexe /out:"$(wslpath -w src/main/taskbar-battery.exe)" \
-  /r:"$FW\System.Drawing.dll" /r:"$FW\System.Windows.Forms.dll" \
-  /r:"$FW\WPF\UIAutomationClient.dll" /r:"$FW\WPF\UIAutomationTypes.dll" /r:"$FW\WPF\WindowsBase.dll" \
-  "${SRC[@]}"
-./src/main/taskbar-battery.exe --self-test | cat; echo "exit=${PIPESTATUS[0]}"
+node scripts/build-taskbar-battery.js; echo "build=$?"
+./src/main/taskbar-battery.exe --self-test --assets "$(wslpath -w assets/taskbar)" | cat; echo "exit=${PIPESTATUS[0]}"
 ```
 Expected: `Policy` と `Protocol` がまだないので、コンパイルに失敗する。
 
@@ -247,7 +251,7 @@ Expected: `Policy` と `Protocol` がまだないので、コンパイルに失�
 - [ ] **Step 5: 通ることを確かめる**
 
 Run: Step 3 と同じコマンド。
-Expected: 警告なしでコンパイルが通る。`PASS 17`（移した 12 件 + `ParseLine` の 5 件）と `exit=0`。`npm test` も通る（WSL では `taskbar-exe` がスキップ）。
+Expected: `build=0`、警告なしでコンパイルが通る。`PASS 17`（移した 12 件 + `ParseLine` の 5 件）と `exit=0`。`npm test` も通る（WSL では `taskbar-exe` がスキップ）。
 
 - [ ] **Step 6: コミット**
 
@@ -274,8 +278,8 @@ git commit -m "feat(fork): タスクバーの表示のプログラムの判定�
 
 - [ ] **Step 2: 失敗を確かめる**
 
-Run: Task 4 の Step 3 のコマンド（`*.cs` に新しいファイルが入る）。`--self-test --assets "$(wslpath -w assets/taskbar)"` で走らせる。
-Expected: コンパイルに失敗する（`Renderer` がない）。
+Run: Task 4 の Step 3 と同じコマンド。
+Expected: `build` が 0 でない（`Renderer` がない）。exe は作り直されない。
 
 - [ ] **Step 3: 5 つのファイルを書き、`Program.cs` を仕上げる**: inzone のコードを C# 5 に直して移す（「Global Constraints」の使えない書き方に注意）。DPI は inzone と同じく、`SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)` で包む。UI Automation の要素の型は `System.Windows.Automation`（`UIAutomationClient.dll`）。
 
@@ -283,10 +287,11 @@ Expected: コンパイルに失敗する（`Renderer` がない）。
 
 Run:
 ```bash
+node scripts/build-taskbar-battery.js && echo build=0 || { echo build-failed; exit 1; }
 ./src/main/taskbar-battery.exe --self-test --assets "$(wslpath -w assets/taskbar)" | cat; echo "exit=${PIPESTATUS[0]}"
-(echo 'mouse,82,0,0;keyboard,45,1,0;headset,18,0,1'; sleep 8; echo ''; sleep 2) | ./src/main/taskbar-battery.exe --assets "$(wslpath -w assets/taskbar)" | cat
+(echo '{"devices":[{"icon":"mouse","level":82,"charging":false,"low":false},{"icon":"keyboard","level":45,"charging":true,"low":false},{"icon":"headset","level":18,"charging":false,"low":true}]}'; sleep 8; echo '{"devices":[]}'; sleep 2) | ./src/main/taskbar-battery.exe --assets "$(wslpath -w assets/taskbar)" | cat
 ```
-Expected: 1 つ目は `PASS <件数>` と `exit=0`。2 つ目は、8 秒の間、Windows のタスクバーのトレイの左に 3 台ぶんが出て、空の行で消え、標準入力が閉じると終わる。表示が出たことは、PowerShell の画面写真（`[System.Windows.Forms.Screen]` と `CopyFromScreen`）を撮り、Read で開いて確かめる。
+Expected: `build=0`。自己テストは `PASS <件数>` と `exit=0`。表示は、8 秒の間、Windows のタスクバーのトレイの左に 3 台ぶんが出て、`devices` が空の行で消え、標準入力が閉じると終わる。表示が出たことは、PowerShell の画面写真（`[System.Windows.Forms.Screen]` と `CopyFromScreen`）を撮り、Read で開いて確かめる。
 
 - [ ] **Step 5: コミット**
 
@@ -299,7 +304,7 @@ git commit -m "feat(fork): タスクバーにデバイスの絵と残量を描�
 
 **Files:**
 - Create: `src/renderer/i18n-fork.js`
-- Modify: `src/main/main.js`（3 か所）、`src/renderer/index.html`（設定の行と `<script>`）、`src/renderer/i18n-strings.js`（末尾の 1 行）
+- Modify: `src/main/main.js`（2 行）、`src/renderer/index.html`（設定の行と `<script>`）、`src/renderer/i18n-strings.js`（末尾の 1 行）
 - Test: `test/taskbar-wiring.test.js`
 
 **Interfaces:**
@@ -309,7 +314,7 @@ git commit -m "feat(fork): タスクバーにデバイスの絵と残量を描�
 - [ ] **Step 1: 失敗するテストを書く**（`test/taskbar-wiring.test.js`）:
   - `src/renderer/index.html` に `data-setting="taskbarBattery"` のトグルがある。
   - `require('../src/renderer/i18n-strings').BH_STRINGS.pt['Taskbar battery levels']` と、説明の文の訳がある。
-  - `src/main/main.js` の、`// fork:` の付いた行が 3 行で、`taskbar.start(`、`taskbar.stop(` を含む。
+  - `src/main/main.js` の、`// fork:` の付いた行が 2 行で、`require('./taskbar')` と `taskbar.start(` を含む。
 
 - [ ] **Step 2: 失敗を確かめる**
 
@@ -317,7 +322,7 @@ Run: `node --test test/taskbar-wiring.test.js`
 Expected: FAIL
 
 - [ ] **Step 3: つなぐ**
-  - `main.js`: `const taskbar = require('./taskbar'); // fork: taskbar battery levels`。`app.whenReady` の `poller.start(broadcast);` の直後に `taskbar.start({ store, logLine }); // fork:`。`quitApp` の `tray.destroyAll();` の直後に `taskbar.stop(); // fork:`。
+  - `main.js`: `const taskbar = require('./taskbar'); // fork: taskbar battery levels`。`app.whenReady` の `poller.start(broadcast);` の直後に `taskbar.start({ store, logLine, app }); // fork:`。
   - `index.html`: 「System tray」のパネルの `closeToTray` の行の後に、`<!-- fork: taskbar battery levels -->` を付けた `settings-row` を 1 つ足す。`data-depends` は付けない（トレイとは別の設定）。題名は `Taskbar battery levels`、説明は `Show each connected device's icon and level next to the tray.`。`<script src="i18n-strings.js"></script>` の直後に `<script src="i18n-fork.js"></script><!-- fork: -->`。
   - `i18n-fork.js`: `(function (apply) { if (typeof module !== 'undefined' && module.exports) module.exports = apply; else apply(BH_STRINGS); })(function (S) { /* pt, es, zh, he, ru の 2 文ずつを Object.assign */ });`
   - `i18n-strings.js`: `module.exports` の行の直前に `if (typeof require === 'function') require('./i18n-fork')(BH_STRINGS); // fork:`。
@@ -341,9 +346,9 @@ git commit -m "feat(fork): タスクバーの表示をアプリと設定画面�
 **Files:**
 - Modify: `docs/fork.md`（「fork だけのもの」の表）、`.github/workflows/build.yml` と `.github/workflows/fork-release.yml`（fork だけのファイル）
 
-- [ ] **Step 1: `docs/fork.md` に足す**: 表に 1 行「タスクバーの残量表示（fork Issue #16）」。目的と、ファイル（`src/main/taskbar.js` `src/main/taskbar-model.js` `src/main/batteries/taskbar/` `scripts/build-taskbar-battery.js` `scripts/make-taskbar-icons.js` `assets/taskbar/` `src/renderer/i18n-fork.js` とテスト）、`// fork:` のつなぎ（`main.js` 3 行、`build-batteries.js` 1 行、`index.html` 2 か所、`i18n-strings.js` 1 行、`.gitignore` 1 行）。確かめ方は「`npm test`。Windows では `taskbar-battery.exe --self-test`」。
+- [ ] **Step 1: `docs/fork.md` に足す**: 表に 1 行「タスクバーの残量表示（fork Issue #16）」。目的と、ファイル（`src/main/taskbar.js` `src/main/taskbar-model.js` `src/main/batteries/taskbar/` `scripts/build-taskbar-battery.js` `scripts/make-taskbar-icons.js` `assets/taskbar/` `src/renderer/i18n-fork.js` とテスト）、`// fork:` のつなぎ（`main.js` 2 行、`build-batteries.js` 1 行、`index.html` 2 か所、`i18n-strings.js` 1 行、`.gitignore` 1 行）。確かめ方は「`npm test`。Windows では `taskbar-battery.exe --self-test`」。
 
-- [ ] **Step 2: CI で自己テストを走らせる**: 両方のワークフローの `npm run dist` の後に、`node --test test/taskbar-exe.test.js` の段を足す（`predist` が exe を作るので、ここでは exe がある）。
+- [ ] **Step 2: CI で自己テストを走らせる**: 両方のワークフローの `npm run dist` の後に、`node --test test/taskbar-exe.test.js` の段を足す（`predist` が exe を作る。作れなければ `CI=true` で `predist` が失敗するので、ここに来たときは exe がある。テストも、exe がなければ CI では失敗する）。
 
 - [ ] **Step 3: コミットして push し、インストーラーを作る**
 
