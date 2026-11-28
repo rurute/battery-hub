@@ -124,6 +124,7 @@ git commit -m "feat(hidpp): unit ID で機体を見分ける identify を足す"
 固定の値:
 - ケーブルの id: `1133:49987:CABLESERIAL`（`c343` = 49987）、レシーバーの親: `1133:50503:0123456789ab`、子機: その後ろに `:408e`。
 - identity: `logi:b35f408ec343:71b82111`。
+- **テストごとに channel の path を変える。** poller は 1 つの instance をテスト全体で使い、`identities`（モジュールの中の Map）に `${device.id}|${device.channels[0].path}` をキーとして成功した identity を覚える。これはテストの後で消せないので、3 つのテストで live の機器の `channels` を `[{ path: 'merge-cable' }]` / `[{ path: 'merge-child' }]`、`attach-cable` / `attach-child`、`silent-cable` / `silent-child` のように別々にし、前のテストが覚えた identity を使わせない。本番の poller の覚え方は変えない。
 
 - [ ] **Step 1: テストを書く**
 
@@ -141,7 +142,9 @@ test('plugging the cable attaches it to the receiver card', async () => {
 });
 test('a device that does not answer identify keeps its card', async () => {
   // devices: cable card and child card; identify throws 'timeout waiting for battery response' for the child
-  // after pollOnce: both cards remain, mergeDevices never called
+  // identify returns G913 for the cable and throws for the child
+  // after pollOnce: both cards remain, mergeDevices never called,
+  // and identify was called for the child (its channel path 'silent-child'), so the throwing path was exercised
 });
 ```
 
@@ -150,7 +153,7 @@ test('a device that does not answer identify keeps its card', async () => {
 - [ ] **Step 2: テストを走らせる**
 
 Run: `node --test test/poller.test.js`
-Expected: PASS。本番のコードは変えないので、Task 1 の契約どおりなら最初から通る。通らなければ poller を直さずに、どの assert が落ちたかを報告して止まる（spec の「まとまる動き（変えない）」の前提が崩れているため）。
+Expected: PASS。本番のコードは変えないので、Task 1 の契約どおりなら最初から通る。通らなければ poller を直さずに、どの assert が落ちたかを報告して止まる。先に、各テストの channel の path が別々で、`hidClient.identify` が想定どおり呼ばれているか（前のテストの identity を使っていないか）を確かめる。それでも落ちるなら、spec の「まとまる動き（変えない）」の前提が崩れている。
 
 Run: `npm test`
 Expected: fail 0
