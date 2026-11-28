@@ -364,3 +364,31 @@ Expected: run が成功し、自己テストの段が `pass` で、スキップ�
 - [ ] **Step 4: 実機で確かめる**: `scripts/download-build.sh` で落としたインストーラーを、作者に入れてもらう。spec の「実機での確認」1〜13 を作者と分担して確かめ、結果（合格・未確認と、その理由）を PR の説明に書く。
 
 - [ ] **Step 5: fork に PR を出す**（`gh pr create -R rurute/battery-hub --base main`、本文で `Closes #16`）。merge はしない。
+
+## レビューの記録
+
+Codex（`codex exec`、read-only、MCP サーバなし）による独立レビュー。run directory は `.ai/v01-run/`（git の追跡外）。要求源は、承認済みの spec（`e538671`）。
+
+| 回 | run directory | 対象 HEAD | 比較元 | verdict | 採用 |
+|---|---|---|---|---|---|
+| 1 | `20261128-125812-plan` | `fde66e1` | なし（新規） | CHANGES_REQUESTED（D 8 件） | 採用（HEAD 一致、exit 0、MCP 起動ログ clean） |
+| 2 | `20261128-130230-plan` | `c198325` | `fde66e1` | CHANGES_REQUESTED（D 2 件） | 採用（同上） |
+| 3 | `20261128-130502-plan` | `fb94988` | `c198325` | APPROVE | 採用（同上） |
+
+直した D:
+
+- 1-F1: やりとりを区切り文字の行にしていたが、spec は 1 行 1 つの JSON → JSON に戻した（C# は `DataContractJsonSerializer`）。
+- 1-F2: 出すデバイスのテストの期待値が、並べ替えた結果と合っていなかった → 直した。
+- 1-F3: 「5 回であきらめる」と、あきらめる条件（`n > 5`）が食い違っていた → 回数と境目をそろえた。
+- 1-F4 / 2-F4: Task 5 で、作り直さずに古い exe を走らせうる。ビルドの失敗も、ローカルでは見えなかった → 確認には `node scripts/build-taskbar-battery.js` を直接使い、直接走らせたときは失敗で止まるようにした。
+- 1-F5 / 2-F9: 絵を使う自己テストに、Node のテストと記録のコマンドが `--assets` を渡していなかった → 渡すようにした。
+- 1-F6: 終了を `quitApp` でしか受けておらず、`autoUpdater.quitAndInstall()` の経路が漏れていた → `will-quit` で受けるようにした（`main.js` のつなぎは 2 行）。
+- 1-F7: 通知のしきい値を変えても少ない判定が変わらないことのテストが無かった → 足した。
+- 1-F8: CI で exe が作れなくても、自己テストを飛ばして通りえた → CI では、ビルドの失敗と exe が無いことを失敗にした。
+
+S / H: なし。
+
+残る限界:
+
+- レビュアは、Windows でのコンパイル、Electron での絵の作成、WSL からの相互運用、実機のタスクバーでの動きを確かめていない。
+- APPROVE は、計画が spec と整合しているというレビュアの判定である。実装済み・テスト成功・HUMAN の承認のどれでもない。
