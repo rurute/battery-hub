@@ -113,11 +113,13 @@ git commit -m "feat(hidpp): unit ID で機体を見分ける identify を足す"
 ### Task 2: poller で 1 枚にまとまることのテスト
 
 **Files:**
-- Modify: `test/poller.test.js`（偽の `store` に `mergeDevices` を足す。テストを 3 つ足す）
+- Modify: `test/poller.test.js`（偽の `store` に `mergeDevices` を足す。偽の `drivers` を差し替えのきく形にする。テストを 3 つ足す）
 
 **Interfaces:**
-- Consumes: Task 1 の `needsIdentify` / `identify` の契約（identity の文字列、`null`、例外）。このテストでは本物の hidpp は使わず、偽の `drivers.detectDriver` が `{ id: 'hidpp', needsIdentify: true }` を返し、偽の `hidClient.identify` が identity を返す。
+- Consumes: Task 1 の `needsIdentify` / `identify` の契約（identity の文字列、`null`、例外）。このテストでは本物の hidpp は使わず、偽の `driverImpl.detectDriver` が `{ id: 'hidpp', needsIdentify: true }` を返し、偽の `hidClient.identify(driverId, device)` が identity を返す。レシーバーの親（`expanded: true` の機器）には、本物の `identify` と同じく `null` を返す。
 - Produces: なし（本番のコードは変えない。テストが失敗したら、poller を直さずに原因を報告する）
+
+**偽の `drivers` を、poller を読み込む前に転送する形にする。** poller は `const { driverById, detectDriver } = require('./hid/drivers')` で読み込み時に関数を取り出すので、テストの中で `drivers.detectDriver = …` と差し替えても poller には届かない。ファイル先頭の `const drivers = { driverById: () => ({}), detectDriver: () => null };` を、`const driverImpl = { driverById: () => ({}), detectDriver: () => null };` と `const drivers = { driverById: (...a) => driverImpl.driverById(...a), detectDriver: (...a) => driverImpl.detectDriver(...a) };` に変え、テストでは `driverImpl.detectDriver` を差し替えて `finally` で戻す。既存のテストの動きは変わらない。
 
 偽の `store.mergeDevices(keepId, dropId)` は、`src/main/store.js` の `mergeDevices` のうち、このテストが見る部分だけを持つ: `links` に `{ id: drop.id, driverId: drop.driverId, profile: drop.profile || null }` と drop の `links` を足し、`customName` は keep を優先して drop で埋め、drop を消す。
 
@@ -148,12 +150,12 @@ test('a device that does not answer identify keeps its card', async () => {
 });
 ```
 
-各テストは `drivers.detectDriver`・`hidClient.enumerate`・`hidClient.identify`・`hidClient.readBattery` を差し替え、`finally` で元に戻し、足したカードを消す（今の receiver のテストと同じ書き方）。`readBattery` は `{ capacity: 95, charging: false }` を返す。
+各テストは `driverImpl.detectDriver`・`hidClient.enumerate`・`hidClient.identify`・`hidClient.readBattery` を差し替え、`finally` で元に戻し、足したカードを消す（今の receiver のテストと同じ書き方）。`readBattery` は `{ capacity: 95, charging: false }` を返す。
 
 - [ ] **Step 2: テストを走らせる**
 
 Run: `node --test test/poller.test.js`
-Expected: PASS。本番のコードは変えないので、Task 1 の契約どおりなら最初から通る。通らなければ poller を直さずに、どの assert が落ちたかを報告して止まる。先に、各テストの channel の path が別々で、`hidClient.identify` が想定どおり呼ばれているか（前のテストの identity を使っていないか）を確かめる。それでも落ちるなら、spec の「まとまる動き（変えない）」の前提が崩れている。
+Expected: PASS。本番のコードは変えないので、Task 1 の契約どおりなら最初から通る。通らなければ poller を直さずに、どの assert が落ちたかを報告して止まる。先に、`driverImpl.detectDriver` が呼ばれているか、各テストの channel の path が別々で、`hidClient.identify` が想定どおり呼ばれているか（前のテストの identity を使っていないか）を確かめる。それでも落ちるなら、spec の「まとまる動き（変えない）」の前提が崩れている。
 
 Run: `npm test`
 Expected: fail 0
