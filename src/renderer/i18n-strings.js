@@ -1026,4 +1026,5 @@ const BH_STRINGS = {
   },
 };
 
+if (typeof require === 'function') require('./i18n-fork')(BH_STRINGS); // fork:
 if (typeof module !== 'undefined' && module.exports) module.exports = { BH_STRINGS };

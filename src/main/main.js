@@ -50,6 +50,7 @@ const notifier = require('./notifier');
 const relay = require('./relay').create(store);
 const { tr } = require('./lang');
 const { offLabel } = require('../renderer/estimate'); // shared with the window, so the tray says the same
+const taskbar = require('./taskbar'); // fork: taskbar battery levels
 
 const ICON = path.join(__dirname, '..', '..', 'assets', 'icon.png');
 let mainWindow = null;
@@ -270,6 +271,7 @@ app.whenReady().then(() => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('devices-changed');
   });
   poller.start(broadcast);
+  taskbar.start({ store, logLine, app }); // fork:
   // A device with no reading sends no updates, so its old reading alert is checked on a clock.
   checkStaleReadings();
   setInterval(checkStaleReadings, STALE_CHECK_MS);
