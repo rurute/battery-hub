@@ -84,6 +84,8 @@ namespace BatteryHubTaskbar
             add("Decide_TickCountWrapIsNotOld", Decide_TickCountWrapIsNotOld);
 
             add("AssetsPath_AppFolderIsUsed", AssetsPath_AppFolderIsUsed);
+            add("AssetsPath_RelativeToTheAppFolderIsUsed", AssetsPath_RelativeToTheAppFolderIsUsed);
+            add("AssetsPath_RelativeElsewhereIsRefused", AssetsPath_RelativeElsewhereIsRefused);
             add("AssetsPath_OthersAreRefused", AssetsPath_OthersAreRefused);
             add("AssetsPath_NotGivenIsNoIconsWithoutProblem", AssetsPath_NotGivenIsNoIconsWithoutProblem);
 
@@ -254,26 +256,77 @@ namespace BatteryHubTaskbar
 
         // --- AssetsPath: --assets is only the app's own icon folder ---
 
-        private const string LocalExe = @"C:\Users\me\AppData\Local\Programs\battery-hub\resources\app\src\main\taskbar-battery.exe";
-        private const string LocalAssets = @"C:\Users\me\AppData\Local\Programs\battery-hub\resources\app\assets\taskbar";
+        private const string LocalApp = @"C:\Users\me\AppData\Local\Programs\battery-hub\resources\app";
+        private const string LocalExe = LocalApp + @"\src\main\taskbar-battery.exe";
+        private const string LocalAssets = LocalApp + @"\assets\taskbar";
+        private const string OtherCwd = @"C:\Windows\System32";
 
         private static void AssetsPath_AppFolderIsUsed()
         {
-            var wslExe = @"\\wsl.localhost\Ubuntu\home\me\battery-hub\src\main\taskbar-battery.exe";
+            var wslApp = @"\\wsl.localhost\Ubuntu\home\me\battery-hub";
+            var wslExe = wslApp + @"\src\main\taskbar-battery.exe";
             var cases = new[]
             {
                 new[] { LocalExe, LocalAssets },
                 new[] { LocalExe, LocalAssets + "\\" },
                 new[] { LocalExe, @"C:\USERS\me\AppData\Local\Programs\battery-hub\resources\app\src\main\..\..\assets\taskbar" },
                 new[] { LocalExe, LocalAssets.Replace('\\', '/') },
-                new[] { wslExe, @"\\wsl.localhost\Ubuntu\home\me\battery-hub\assets\taskbar" },
+                new[] { wslExe, wslApp + @"\assets\taskbar" },
             };
             foreach (var c in cases)
             {
                 string problem;
-                var dir = AssetsPath.Check(c[1], c[0], out problem);
-                Equal(c[1], dir, "folder for " + c[1]);
+                var dir = AssetsPath.Check(c[1], c[0], OtherCwd, out problem);
+                True(string.Equals(dir, AssetsPath.Expected(c[0]), StringComparison.OrdinalIgnoreCase), "folder for " + c[1] + ", got: " + dir);
                 True(problem == null, "no problem for " + c[1] + ", got: " + problem);
+            }
+        }
+
+        // docs/fork.md: `src\main\taskbar-battery.exe --self-test --assets assets\taskbar` from the app folder.
+        private static void AssetsPath_RelativeToTheAppFolderIsUsed()
+        {
+            var cases = new[]
+            {
+                new[] { LocalApp, @"assets\taskbar" },
+                new[] { LocalApp, @"assets/taskbar/" },
+                new[] { LocalApp, @".\assets\taskbar" },
+                new[] { LocalApp + @"\src", @"..\assets\taskbar" },
+                new[] { LocalApp + @"\src\main", @"..\..\assets\taskbar" },
+                new[] { @"\\wsl.localhost\Ubuntu\home\me\battery-hub", @"assets\taskbar" },
+            };
+            foreach (var c in cases)
+            {
+                var exe = c[0].StartsWith(@"\\", StringComparison.Ordinal)
+                    ? @"\\wsl.localhost\Ubuntu\home\me\battery-hub\src\main\taskbar-battery.exe"
+                    : LocalExe;
+                string problem;
+                var dir = AssetsPath.Check(c[1], exe, c[0], out problem);
+                True(string.Equals(dir, AssetsPath.Expected(exe), StringComparison.OrdinalIgnoreCase),
+                    "folder for " + c[1] + " in " + c[0] + ", got: " + dir);
+                True(problem == null, "no problem for " + c[1] + " in " + c[0] + ", got: " + problem);
+            }
+        }
+
+        private static void AssetsPath_RelativeElsewhereIsRefused()
+        {
+            var cases = new[]
+            {
+                new[] { LocalApp, @"..\assets\taskbar" },
+                new[] { LocalApp, "src" },
+                new[] { LocalApp, "assets" },
+                new[] { LocalApp, @"assets\taskbar\.." },
+                new[] { OtherCwd, @"assets\taskbar" },
+                new[] { @"\\remote-host\share", @"assets\taskbar" },
+                new[] { null, @"assets\taskbar" },
+                new[] { LocalApp, "assets\\task\u0000bar" },
+            };
+            foreach (var c in cases)
+            {
+                string problem;
+                var dir = AssetsPath.Check(c[1], LocalExe, c[0], out problem);
+                True(dir == null, "should be refused: " + c[1] + " in " + (c[0] ?? "(no current folder)"));
+                True(problem != null && problem.StartsWith("The icon folder is not the app's own (", StringComparison.Ordinal),
+                    "should say why for " + c[1] + ", got: " + problem);
             }
         }
 
@@ -286,10 +339,11 @@ namespace BatteryHubTaskbar
                 @"//remote-host/share/assets/taskbar",
                 @"\\?\" + LocalAssets,
                 @"\\.\" + LocalAssets,
-                @"assets\taskbar",
-                @"..\..\assets\taskbar",
+                @"\\?\UNC\remote-host\share",
                 @"C:assets\taskbar",
+                @"C:..\..\assets\taskbar",
                 @"\Users\me\AppData\Local\Programs\battery-hub\resources\app\assets\taskbar",
+                @"/Users/me/AppData/Local/Programs/battery-hub/resources/app/assets/taskbar",
                 @"C:\Windows",
                 LocalAssets + @"\..\..\other",
                 "",
@@ -297,8 +351,10 @@ namespace BatteryHubTaskbar
             };
             foreach (var given in refused)
             {
+                // The current folder is the app folder, so a drive- or root-relative path that would land on the
+                // icon folder is still refused for its form.
                 string problem;
-                var dir = AssetsPath.Check(given, LocalExe, out problem);
+                var dir = AssetsPath.Check(given, LocalExe, LocalApp, out problem);
                 True(dir == null, "should be refused: " + given);
                 True(problem != null && problem.StartsWith("The icon folder is not the app's own (", StringComparison.Ordinal),
                     "should say why for " + given + ", got: " + problem);
@@ -306,15 +362,15 @@ namespace BatteryHubTaskbar
 
             // The app's folder of an exe on a share: still refused for a local exe, and the other way round.
             string p;
-            True(AssetsPath.Check(@"\\wsl.localhost\Ubuntu\home\me\battery-hub\assets\taskbar", LocalExe, out p) == null, "share for a local exe");
-            True(AssetsPath.Check(LocalAssets, @"\\wsl.localhost\Ubuntu\home\me\battery-hub\src\main\taskbar-battery.exe", out p) == null, "local for an exe on a share");
-            True(AssetsPath.Check(LocalAssets, null, out p) == null && p != null, "unknown exe");
+            True(AssetsPath.Check(@"\\wsl.localhost\Ubuntu\home\me\battery-hub\assets\taskbar", LocalExe, LocalApp, out p) == null, "share for a local exe");
+            True(AssetsPath.Check(LocalAssets, @"\\wsl.localhost\Ubuntu\home\me\battery-hub\src\main\taskbar-battery.exe", LocalApp, out p) == null, "local for an exe on a share");
+            True(AssetsPath.Check(LocalAssets, null, LocalApp, out p) == null && p != null, "unknown exe");
         }
 
         private static void AssetsPath_NotGivenIsNoIconsWithoutProblem()
         {
             string problem;
-            True(AssetsPath.Check(null, LocalExe, out problem) == null, "no folder");
+            True(AssetsPath.Check(null, LocalExe, LocalApp, out problem) == null, "no folder");
             True(problem == null, "not given is not a problem here (RunOverlay warns that it is not there)");
         }
 

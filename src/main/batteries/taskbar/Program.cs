@@ -4,7 +4,9 @@
 // stdin: one JSON line per update (Protocol). stdout: one "WARN|INFO|ERROR <text>" line per event.
 // It ends when stdin closes or the --parent process is gone.
 // --assets is only used when it names the app's own icon folder, <exe folder>\..\..\assets\taskbar
-// (AssetsPath); any other folder, UNC share or device path gets one WARN and the levels without icons.
+// (AssetsPath; a relative path is taken from the current folder first, so `src\main\taskbar-battery.exe
+// --self-test --assets assets\taskbar` from the app folder works); any other folder, UNC share or device
+// path gets one WARN and the levels without icons.
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -45,7 +47,7 @@ namespace BatteryHubTaskbar
             }
 
             string assetsProblem;
-            var icons = AssetsPath.Check(assetsDir, AssetsPath.ExePath(), out assetsProblem);
+            var icons = AssetsPath.Check(assetsDir, AssetsPath.ExePath(), AssetsPath.CurrentFolder(), out assetsProblem);
             if (selfTest)
             {
                 if (assetsProblem != null)
@@ -311,8 +313,10 @@ namespace BatteryHubTaskbar
     /// Which --assets values are used: only the app's own icon folder, the one next to the exe as the app
     /// ships it (src\main\taskbar-battery.exe and assets\taskbar, both under the same app folder). The
     /// path is compared as text before anything touches the disk, so a refused value (another folder,
-    /// a relative path, a UNC share, \\?\ or \\.\) is never opened and causes no network access. A UNC
-    /// path passes only when the exe itself runs from that share (as when it is run from WSL).
+    /// a UNC share, \\?\ or \\.\, a drive-relative C:x or a root-relative \x) is never opened and causes
+    /// no network access. A plain relative path (assets\taskbar) is first made full from the current
+    /// folder, as text, and then has to match the same way. A UNC path passes only when the exe itself
+    /// runs from that share (as when it is run from WSL).
     /// </summary>
     internal static class AssetsPath
     {
@@ -321,6 +325,18 @@ namespace BatteryHubTaskbar
             try
             {
                 return System.Reflection.Assembly.GetEntryAssembly().Location;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        public static string CurrentFolder()
+        {
+            try
+            {
+                return Environment.CurrentDirectory;
             }
             catch (Exception)
             {
@@ -343,10 +359,11 @@ namespace BatteryHubTaskbar
         }
 
         /// <summary>
-        /// The folder to read the icons from, or null. problem is set (one line, for a WARN) when given
-        /// was refused, and null when it is fine or was not given at all.
+        /// The folder to read the icons from (full, normalized), or null. A relative given is taken from
+        /// currentFolder. problem is set (one line, for a WARN) when given was refused, and null when it
+        /// is fine or was not given at all.
         /// </summary>
-        public static string Check(string given, string exePath, out string problem)
+        public static string Check(string given, string exePath, string currentFolder, out string problem)
         {
             problem = null;
             if (given == null)
@@ -354,18 +371,20 @@ namespace BatteryHubTaskbar
                 return null;
             }
 
-            var reason = Refuse(given, exePath);
+            string full;
+            var reason = Refuse(given, exePath, currentFolder, out full);
             if (reason == null)
             {
-                return given;
+                return full;
             }
 
             problem = "The icon folder is not the app's own (" + reason + "), showing levels without icons: " + given;
             return null;
         }
 
-        private static string Refuse(string given, string exePath)
+        private static string Refuse(string given, string exePath, string currentFolder, out string full)
         {
+            full = null;
             if (given.Length == 0)
             {
                 return "empty";
@@ -380,7 +399,9 @@ namespace BatteryHubTaskbar
             var unc = given.StartsWith(@"\\", StringComparison.Ordinal) || given.StartsWith("//", StringComparison.Ordinal);
             var drive = given.Length >= 3 && char.IsLetter(given[0]) && given[0] < 128 && given[1] == ':'
                 && (given[2] == '\\' || given[2] == '/');
-            if (!unc && !drive)
+            // C:x (relative to that drive's own current folder) and \x (relative to the current drive).
+            var partly = given[0] == '\\' || given[0] == '/' || (given.Length >= 2 && given[1] == ':');
+            if (!unc && !drive && partly)
             {
                 return "not a full path";
             }
@@ -391,21 +412,35 @@ namespace BatteryHubTaskbar
                 return "can't tell where the exe is";
             }
 
-            string full;
+            string resolved;
             try
             {
-                full = Normalize(given);
+                if (unc || drive)
+                {
+                    resolved = Normalize(given);
+                }
+                else
+                {
+                    // A plain relative path: made full from the current folder, as text.
+                    if (string.IsNullOrEmpty(currentFolder))
+                    {
+                        return "can't tell the current folder";
+                    }
+
+                    resolved = Normalize(Path.Combine(currentFolder, given));
+                }
             }
             catch (Exception)
             {
                 return "not a valid path";
             }
 
-            if (!string.Equals(full, expected, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(resolved, expected, StringComparison.OrdinalIgnoreCase))
             {
-                return unc ? "a network path" : "another folder";
+                return resolved.StartsWith(@"\\", StringComparison.Ordinal) ? "a network path" : "another folder";
             }
 
+            full = resolved;
             return null;
         }
 
