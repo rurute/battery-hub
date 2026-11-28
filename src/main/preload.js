@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld('batteryHub', {
   deviceReport: (request) => ipcRenderer.invoke('support:device-report', request),
   worksReport: (id) => ipcRenderer.invoke('support:works-report', id),
   markReported: (hardware) => ipcRenderer.invoke('support:mark-reported', hardware),
+  relayAvailable: () => ipcRenderer.invoke('support:relay-available'),
+  sendDirect: (form, hardware) => ipcRenderer.invoke('support:send-direct', form, hardware),
+  myReports: () => ipcRenderer.invoke('support:my-reports'),
+  replyToReport: (number, text) => ipcRenderer.invoke('support:reply', number, text),
+  onShowMyReports: (cb) => ipcRenderer.on('show-my-reports', () => cb()),
 
   localTools: () => ipcRenderer.invoke('local-tools:list'),
   runLocalTool: (id) => ipcRenderer.send('local-tools:run', id),

@@ -106,18 +106,29 @@ static class Program
     }
 
     // --all also reads devices Windows already has a level for (to check this read against Windows).
+    // --only <MAC,MAC> reads just those devices: the app's timer asks only for the ones it tracks, so a
+    // paired device nobody added isn't woken every few minutes.
     static int Main(string[] args)
     {
         bool all = Array.IndexOf(args, "--all") >= 0;
+        HashSet<string> only = null;
+        int onlyAt = Array.IndexOf(args, "--only");
+        if (onlyAt >= 0 && onlyAt + 1 < args.Length)
+            only = new HashSet<string>(args[onlyAt + 1].ToUpperInvariant().Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
         Console.OutputEncoding = new UTF8Encoding(false);
         var found = new List<string>();
         var seen = new HashSet<string>();
+        // The app stops this after 60 s; stop at 45 s so what was read still gets printed. Devices that
+        // are paired but away take seconds each.
+        var stopAt = DateTime.UtcNow.AddSeconds(45);
         foreach (string id in Ids())
         {
+            if (DateTime.UtcNow > stopAt) break;
             var m = System.Text.RegularExpressions.Regex.Match(id, @"^BTHLE\\DEV_([0-9A-F]{12})\\", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (!m.Success) continue;
             string mac = m.Groups[1].Value.ToUpperInvariant();
             if (!seen.Add(mac)) continue;
+            if (only != null && !only.Contains(mac)) continue;
             uint node;
             if (CM_Locate_DevNodeW(out node, id, 0) != 0) continue;
             if (!all && Read(node, BATTERY) != null) continue; // Windows already has it: the other helper lists it

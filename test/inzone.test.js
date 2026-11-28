@@ -180,3 +180,18 @@ test('inzone: the buds get the headset icon whatever the dongle calls itself', (
   assert.equal(vm.runInContext("iconFor('Hid Interface', null)", context), 'plug');
   assert.equal(vm.runInContext("iconFor('Wireless Controller', 'playstation')", context), 'controller');
 });
+
+const H5 = { id: 'h5', vendorId: 0x054c, productId: 0x0ebf, channels: [{ path: 'h1', usagePage: 0xff04, usage: 0x0001 }, { path: 'h2', usagePage: 0xff04, usage: 0x0002 }] };
+
+test('inzone H5: a request both collections refuse is an error, not the headset being off', async () => {
+  await withScript([new Error('Cannot write to hid device'), new Error('Cannot write to hid device')], async (calls) => {
+    await assert.rejects(inzone.readBattery(H5), /Cannot write/);
+    assert.equal(calls.length, 2);
+  });
+});
+
+test('inzone H5: silence on a collection that took the request is the headset being off', async () => {
+  await withScript([new Error('Cannot write to hid device'), 'timeout', 'timeout'], async () => {
+    await assert.rejects(inzone.readBattery(H5), /^Error: headset is off$/);
+  });
+});

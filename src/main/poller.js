@@ -105,6 +105,8 @@ async function withPollingPaused(fn) {
   }
 }
 
+let systemScan = null; // a Refresh's Windows scan, while it runs
+
 async function pollOnce(onUpdate, { force = false, only = null } = {}) {
   // A refresh the user asked for waits its turn; a routine poll just skips this round.
   for (let waited = 0; force && polling && waited < FORCE_WAIT_MS; waited += 50) await new Promise((r) => setTimeout(r, 50));
@@ -113,10 +115,14 @@ async function pollOnce(onUpdate, { force = false, only = null } = {}) {
   try {
     if (force) {
       invalidateLiveCache(); // manual Refresh always re-scans USB
-      await system.scan();
+      // The Windows and Bluetooth scan can take several seconds; device reads don't need it, so it
+      // runs alongside them and only the cards read through Windows wait for it.
+      systemScan = system.scan().catch(() => {});
     }
     await pollAllDevices(onUpdate, only);
+    if (systemScan) await systemScan;
   } finally {
+    systemScan = null;
     polling = false;
   }
 }
@@ -273,12 +279,18 @@ async function pollAllDevices(onUpdate, only = null) {
   await reconcile(live);
   const saved = store.getDevices();
   const usesWindows = Object.values(saved).some((c) => !c.hidden && routesOf(c).some((r) => system.isSystemId(r.id)));
-  if (usesWindows) system.startWatching();
+  // The Bluetooth LE devices saved cards read directly: only those are asked on the reader's timer.
+  const bleMacs = [...new Set(Object.values(saved).filter((c) => !c.hidden)
+    .flatMap((c) => routesOf(c).map((r) => (/^ble:([0-9A-F]{12})$/i.exec(r.id) || [])[1]).filter(Boolean)))]
+    .map((mac) => mac.toUpperCase()).sort();
+  if (usesWindows) system.startWatching({ ble: bleMacs });
   else system.stopWatching();
   let rescannedThisPoll = false; // force at most one fresh USB scan per poll
   const napping = [];
 
-  for (const id of Object.keys(saved)) {
+  const away = (card) => card.online === false || !!card.lastError;
+  const order = Object.keys(saved).sort((a, b) => Number(away(saved[a])) - Number(away(saved[b])));
+  for (const id of order) {
     if (only && !only.includes(id)) continue;
     const cfg = saved[id];
     if (!isTracked(id)) continue;
@@ -311,6 +323,7 @@ async function pollAllDevices(onUpdate, only = null) {
     for (const route of routes) {
       let attempt;
       if (system.isSystemId(route.id)) {
+        if (systemScan) await systemScan;
         attempt = readWindowsRoute(route);
       } else {
         const driver = driverById(route.driverId);

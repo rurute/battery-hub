@@ -18,6 +18,7 @@ let mode = 'perDevice';
 const devices = new Map();     // id -> info { name, capacity, charging, offline }  (source of truth)
 const perTrays = new Map();    // id -> { tray, lastKey }   (perDevice mode)
 let listTray = null;           // single Tray                (list mode)
+let listKey = null;            // what the list tray shows now
 const imageCache = new Map();  // file -> nativeImage
 
 function setHandlers(open, quit, flyout) {
@@ -116,7 +117,16 @@ function renderList() {
   }
 
   // One icon for all devices: its face follows the battery that most needs attention.
-  const img = moodImage(moodFor(list));
+  const mood = moodFor(list);
+  const lines = list.map((d) => `${d.name}: ${statusText(d)}`);
+  const open = tr('Open Battery Hub');
+  const quit = tr('Quit Battery Hub');
+  // Every device update lands here; the shell's icon, tooltip and menu calls are skipped when
+  // nothing they show has changed.
+  const key = JSON.stringify([mood, lines, open, quit]);
+  if (listTray && listKey === key) return;
+  listKey = key;
+  const img = moodImage(mood);
 
   if (!listTray) {
     listTray = new Tray(img);
@@ -125,13 +135,13 @@ function renderList() {
     listTray.setImage(img);
   }
 
-  listTray.setToolTip(['Battery Hub', ...list.map((d) => `${d.name}: ${statusText(d)}`)].join('\n'));
+  listTray.setToolTip(['Battery Hub', ...lines].join('\n'));
   const items = [{ label: 'Battery Hub', enabled: false }, { type: 'separator' }];
-  for (const d of list) items.push({ label: `${d.name}: ${statusText(d)}`, enabled: false });
+  for (const line of lines) items.push({ label: line, enabled: false });
   items.push(
     { type: 'separator' },
-    { label: tr('Open Battery Hub'), click: () => handlers.open() },
-    { label: tr('Quit Battery Hub'), click: () => handlers.quit() },
+    { label: open, click: () => handlers.open() },
+    { label: quit, click: () => handlers.quit() },
   );
   listTray.setContextMenu(Menu.buildFromTemplate(items));
 }

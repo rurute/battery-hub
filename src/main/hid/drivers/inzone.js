@@ -58,15 +58,59 @@ function _resetTid(value = FIRST_TID) {
   tidNext = value;
 }
 
+// INZONE H5 (0ebf) and H9 II (0fa8) take the same request on their own dongles and answer with one
+// battery: 02 <len> 04 FF 0B 00 96 C3 14 04 10 <tid lo> <tid hi> <charger> <level> <sum>, level 0xFF
+// when the headset is off (HeadsetControl sony_inzone_h5 / h9_ii and getSonyBattery; an H5 reply seen
+// by HaloBattery: 02 0e 04 ff 0b 00 96 c3 14 04 10 02 01 00 32 b6 = 50 %). The sum covers bytes 5 to
+// <len>, as the Buds' does. HeadsetControl names 0xFF04/0x0002 for the H5, HaloBattery 0x0001: both are tried.
+const HEADSETS = new Set([0x0ebf, 0x0fa8]);
+function parseHeadset(frame, tid) {
+  const len = frame[1];
+  if (frame.length < 16 || frame[0] !== REPORT_ID || len + 1 >= frame.length) return null;
+  if (frame[9] !== BATTERY_EVENT || frame[10] !== GET_ANSWER) return null;
+  if (frame[11] !== (tid & 0xff) || frame[12] !== ((tid >> 8) & 0xff)) return null;
+  if (frame[len + 1] !== lowByte(frame.slice(5, len + 1))) return null;
+  if (frame[14] === 0xff) return { off: true };
+  return frame[14] <= 100 ? { capacity: frame[14], charging: frame[13] !== 0 } : null;
+}
+
 const commandChannel = (logicalDevice) => logicalDevice.channels.find((c) => c.usagePage === 0xff04 && c.usage === 0x0001);
+const headsetChannels = (logicalDevice) => [0x0001, 0x0002]
+  .map((usage) => logicalDevice.channels.find((c) => c.usagePage === 0xff04 && c.usage === usage)).filter(Boolean);
+const isHeadset = (logicalDevice) => logicalDevice.vendorId === SONY && HEADSETS.has(logicalDevice.productId);
 
 function matches(logicalDevice) {
+  if (isHeadset(logicalDevice)) return headsetChannels(logicalDevice).length > 0;
   return logicalDevice.vendorId === SONY && logicalDevice.productId === DONGLE && !!commandChannel(logicalDevice);
+}
+
+async function readHeadset(logicalDevice) {
+  let silent = false; // a collection that took the request but got no answer
+  let refused = null;
+  for (const channel of headsetChannels(logicalDevice)) {
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      const tid = nextTid();
+      let reading;
+      try {
+        reading = await exchange.exchange(channel, request(tid), (f) => parseHeadset(f, tid), REPLY_MS);
+      } catch (e) {
+        if (TIMEOUT.test(e.message)) { silent = true; continue; }
+        refused = e;
+        break; // this collection refuses the request: try the other one
+      }
+      if (reading.off) throw new Error('headset is off');
+      return reading;
+    }
+  }
+  // Silence means the headset is off; a request every collection refused is an error to show, not "off".
+  if (silent || !refused) throw new Error('headset is off');
+  throw refused;
 }
 
 // The card shows the lower earbud. With neither earbud reporting, or no reply at all (the case is
 // closed), the earbuds are treated as switched off, as the poller does for other headsets.
 async function readBattery(logicalDevice) {
+  if (isHeadset(logicalDevice)) return readHeadset(logicalDevice);
   const channel = commandChannel(logicalDevice);
   if (!channel) throw new Error('no command channel');
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
@@ -88,4 +132,4 @@ async function readBattery(logicalDevice) {
   throw new Error('headset is off');
 }
 
-module.exports = { id: 'inzone', matches, readBattery, request, parseReply, nextTid, _resetTid };
+module.exports = { id: 'inzone', matches, readBattery, request, parseReply, parseHeadset, nextTid, _resetTid };

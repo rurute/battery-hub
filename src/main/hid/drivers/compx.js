@@ -41,8 +41,20 @@ const REQUESTS = [SESSION, ...QUERIES];
 
 const channelOf = (logicalDevice) => logicalDevice.channels.find((c) => c.usagePage === USAGE_PAGE && (c.usage === undefined || c.usage === 2));
 
+// MCHOSE's K87 (41e4:2001) and G98 Pro (41e4:2004) receivers send the same 13 4A frames (HaloBattery
+// mchose_kb.py from MCHOSE's M HUB, #378 on hardware: 94 % on battery, 50 % charging on the cable).
+const MCHOSE_KB = 0x41e4;
+const MCHOSE_KB_PRODUCTS = new Set([0x2001, 0x2004]);
+// VGN's "beiying" keyboard dongles, in its web driver with the same report 0x13 and 4A query: N75 V2
+// 391d:2a01, V108 391d:2a02, V87 V2 258a:027b, V98pro V3 258a:024f / 027f. Only these ids: 258a is
+// SinoWealth's, and other keyboards under it take flash writes on their command channel.
+const VGN_KB = new Set(['391d:2a01', '391d:2a02', '258a:027b', '258a:024f', '258a:027f']);
+
 function matches(logicalDevice) {
-  return logicalDevice.vendorId === VENDOR && logicalDevice.productId === PRODUCT && !!channelOf(logicalDevice);
+  const { vendorId, productId } = logicalDevice;
+  const id = `${(vendorId || 0).toString(16).padStart(4, '0')}:${(productId || 0).toString(16).padStart(4, '0')}`;
+  const known = (vendorId === VENDOR && productId === PRODUCT) || (vendorId === MCHOSE_KB && MCHOSE_KB_PRODUCTS.has(productId)) || VGN_KB.has(id);
+  return known && !!channelOf(logicalDevice);
 }
 
 // A battery reading, { ack: true } for the receiver's session answer, or null for anything else.
@@ -68,9 +80,21 @@ function sendControl(channelPath) {
   });
 }
 
+// fa09 receivers that turned out to carry a mouse go straight to the mouse read: the keyboard session
+// before it costs a PowerShell start and up to 13 s, past hid-client's 12 s limit.
+const mouseReceivers = new Set();
+
 async function readBattery(logicalDevice) {
   const channel = channelOf(logicalDevice);
   if (!channel) throw new Error('no command channel');
+  if (mouseReceivers.has(channel.path)) {
+    try {
+      return await require('./kysona').readMouse(logicalDevice);
+    } catch (e) {
+      if (!/ is off$/.test(e.message)) mouseReceivers.delete(channel.path); // ask the keyboard way again next time
+      throw e;
+    }
+  }
   const dev = await session.acquire(channel.path);
   await session.readQueued(channel.path, dev); // a late reply to an old request is stale
 
@@ -106,6 +130,13 @@ async function readBattery(logicalDevice) {
   await sent;
   if (control) return control;
   if (answered) throw new Error('keyboard is not answering');
+  // No session answer at all: 3554:fa09 also carries mice (issues #244, #190, #82, #116), which speak
+  // the VXE mouse frame instead. Required here, not at the top, as kysona.js requires this file.
+  if (logicalDevice.vendorId === VENDOR) {
+    const reading = await require('./kysona').readMouse(logicalDevice);
+    mouseReceivers.add(channel.path);
+    return reading;
+  }
   throw writeError || controlError || new Error('timeout waiting for battery response');
 }
 

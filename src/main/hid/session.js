@@ -19,6 +19,9 @@ const HID = require('node-hid');
 const MAX_QUEUED_FRAMES = 64; // more than the OS input buffer holds
 
 const sessions = new Map(); // path -> Promise<HIDAsync>
+// Paths whose last read timed out: hidapi leaves that overlapped read running, so the handle must not
+// be closed until a read on it comes back with data or fails.
+const pending = new Set();
 
 function acquire(path) {
   let opening = sessions.get(path);
@@ -33,8 +36,12 @@ function acquire(path) {
 // Returns the next frame as a plain array, or [] if none arrived within timeoutMs.
 async function read(path, dev, timeoutMs) {
   try {
-    return Array.from(await dev.read(timeoutMs));
+    const frame = Array.from(await dev.read(timeoutMs));
+    if (frame.length === 0) pending.add(path);
+    else pending.delete(path);
+    return frame;
   } catch (e) {
+    pending.delete(path);
     sessions.delete(path);
     dev.close().catch(() => {});
     throw e;
@@ -52,22 +59,38 @@ async function readQueued(path, dev) {
   return frames;
 }
 
-async function write(path, dev, bytes) {
-  try { await dev.write(bytes); }
-  catch (e) { sessions.delete(path); dev.close().catch(() => {}); throw e; }
+// A failed write or feature call usually means the device was unplugged, and a handle from before
+// then never works again, so the next poll opens a fresh one. The old handle is closed only when no
+// read is pending on it (see the top of this file); otherwise it is left for the worker's end.
+function drop(path, dev) {
+  sessions.delete(path);
+  if (!pending.has(path)) dev.close().catch(() => {});
 }
 
-// For drivers that only use feature reports, which leave nothing pending, so closing straight after
-// a failure is safe. A failure usually means the device was unplugged, and a handle from before then
-// never works again, even once the device is back at the same path.
+async function write(path, dev, bytes) {
+  try { await dev.write(bytes); }
+  catch (e) { drop(path, dev); throw e; }
+}
+
 async function getFeatureReport(path, dev, reportId, length) {
   try { return Array.from(await dev.getFeatureReport(reportId, length)); }
-  catch (e) { sessions.delete(path); dev.close().catch(() => {}); throw e; }
+  catch (e) { drop(path, dev); throw e; }
 }
 
 async function sendFeatureReport(path, dev, bytes) {
   try { return await dev.sendFeatureReport(bytes); }
-  catch (e) { sessions.delete(path); dev.close().catch(() => {}); throw e; }
+  catch (e) { drop(path, dev); throw e; }
 }
 
-module.exports = { acquire, read, readQueued, write, getFeatureReport, sendFeatureReport };
+// Runs fn after every earlier call with the same key has finished, so two reads of one device never
+// overlap (a read the client gave up on keeps going here, and a second one would eat its replies).
+const locks = new Map();
+function serialize(key, fn) {
+  const run = (locks.get(key) || Promise.resolve()).then(fn, fn);
+  const tail = run.catch(() => {});
+  locks.set(key, tail);
+  tail.then(() => { if (locks.get(key) === tail) locks.delete(key); });
+  return run;
+}
+
+module.exports = { acquire, read, readQueued, write, getFeatureReport, sendFeatureReport, serialize };

@@ -20,9 +20,12 @@ function isG3a(logicalDevice) {
   return mchose && /\bg3\s*a\b/i.test(product);
 }
 
-// VGN's YJX mice and receivers (its web driver lists them on 0xFF01/0x0010).
-const VGN_YJX = new Set([0x1001, 0x1a01, 0x1003, 0x1a03]);
-const isVgnYjx = (d) => d.vendorId === 0x391d && VGN_YJX.has(d.productId);
+// VGN's YJX mice and receivers (its web driver lists them on 0xFF01/0x0010, type "yongjiaxin"): the
+// Dragonfly Y2 and F1 V2 families, cable and receiver, and the Dragonfly3 SE under MCHOSE's 3837:4042.
+// VGN's own driver asks 55 30 00 ..., tried when the MCHOSE form gets no answer.
+const VGN_YJX = new Set([0x1001, 0x1a01, 0x1003, 0x1a03, 0x100a, 0x1a09, 0x100b, 0x1a0a, 0x1017, 0x1a14, 0x1019, 0x1a16]);
+const isVgnYjx = (d) => (d.vendorId === 0x391d && VGN_YJX.has(d.productId)) || (d.vendorId === 0x3837 && d.productId === 0x4042);
+const VGN_REQUEST = pad([0x00, 0x55, 0x30], 65);
 
 function matches(logicalDevice) {
   return (VENDORS.has(logicalDevice.vendorId) || isG3a(logicalDevice) || isVgnYjx(logicalDevice)) && !!channelOf(logicalDevice);
@@ -53,7 +56,10 @@ async function readBattery(logicalDevice) {
       });
       if (online === false) throw new Error('mouse is off');
     }
-    reading = await exchange(channel, REQUEST, parseReply);
+    reading = await exchange(channel, REQUEST, parseReply).catch((e) => {
+      if (!/^timeout/.test(e.message) || !isVgnYjx(logicalDevice)) throw e;
+      return exchange(channel, VGN_REQUEST, parseReply);
+    });
   } catch (e) {
     if (/^timeout/.test(e.message)) throw new Error('mouse is not answering');
     throw e;

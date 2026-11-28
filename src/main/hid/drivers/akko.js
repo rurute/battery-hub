@@ -13,6 +13,10 @@ const REQUEST = pad([0x04, 0x00, 0x00, 0x1a, 0x06], 8);
 // Wobkey's driver for the Telink mice on the same collection (issues #11, #65, #134, #193) fills in
 // bytes 1-2 as the 16-bit sum of the command bytes; Akko's leaves them 0. Telink firmware may want it.
 const REQUEST_SUMMED = pad([0x04, 0x20, 0x00, 0x1a, 0x06], 8);
+// CHERRY MX 3.0S Wireless (046a:00ea dongle, 00e3 cable) asks the same register with 03 .. 55 and the
+// sum filled in (HaloBattery cherry.py, from B1Chat/BatteryWatch, on the dongle).
+const CHERRY = 0x046a;
+const REQUEST_CHERRY = pad([0x04, 0x72, 0x00, 0x1a, 0x03, 0x00, 0x00, 0x55], 8);
 const channelOf = (d) => d.channels.find((c) => c.usagePage === 0xff1c && c.usage === 0x92);
 
 function matches(logicalDevice) {
@@ -21,7 +25,8 @@ function matches(logicalDevice) {
 
 function parseReply(f) {
   if (f.length < 10 || f[0] !== 0x04 || f[3] !== 0x1a) return null;
-  if (f[8] === 0 || f[8] > 100) return { offline: true };
+  if (f[8] > 100) return null; // not a level: keep waiting
+  if (f[8] === 0) return { offline: true };
   return { capacity: f[8], charging: f[9] === 1 };
 }
 
@@ -30,7 +35,8 @@ async function readBattery(logicalDevice) {
   if (!channel) throw new Error('no command channel');
   let reading;
   try {
-    reading = await exchange(channel, REQUEST, parseReply, 2000)
+    const first = logicalDevice.vendorId === CHERRY ? REQUEST_CHERRY : REQUEST;
+    reading = await exchange(channel, first, parseReply, 2000)
       .catch((e) => (/^timeout/.test(e.message) ? exchange(channel, REQUEST_SUMMED, parseReply, 2000) : Promise.reject(e)));
   } catch (e) {
     if (/^timeout/.test(e.message)) throw new Error('mouse is not answering');
@@ -40,4 +46,4 @@ async function readBattery(logicalDevice) {
   return reading;
 }
 
-module.exports = { id: 'akko', matches, readBattery, parseReply, REQUEST, REQUEST_SUMMED };
+module.exports = { id: 'akko', matches, readBattery, parseReply, REQUEST, REQUEST_SUMMED, REQUEST_CHERRY };

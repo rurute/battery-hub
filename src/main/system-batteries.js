@@ -13,6 +13,10 @@ const BLE_PROGRAM = path.join(__dirname, 'ble-batteries.exe');
 const BLE_EVERY_MS = 5 * 60 * 1000;
 const BLE_TIMEOUT_MS = 60000;
 const BLE_SCAN_WAIT_MS = 8000;
+// A device not read for two rounds (switched off, flat, unpaired) is shown as not connected, with its
+// last level, as the Bluetooth entries Windows keeps are.
+const BLE_STALE_MS = 2 * BLE_EVERY_MS + BLE_TIMEOUT_MS;
+const bleNow = (d) => (d && Date.now() - d.seenAt > BLE_STALE_MS ? { ...d, connected: false } : d);
 const SCRIPT = path.join(__dirname, 'system-batteries.ps1');
 const ARGS = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT];
 
@@ -28,17 +32,23 @@ let watcher = null;
 let latest = new Map(); // id -> { id, name, kind, capacity, connected }
 let ble = new Map();    // the same, from the Bluetooth LE reader
 let bleTimer = null;
+let bleOnly = null;     // the MACs the saved cards read directly; the timer reads only those
+let bleRun = null;      // the reader that's running, so a scan and the timer never start two
 
-function readBle() {
-  return new Promise((resolve) => {
+// only: a list of MACs to read, or null for every paired LE device without a Windows level (Add device).
+function readBle(only = null) {
+  if (bleRun) return bleRun;
+  bleRun = new Promise((resolve) => {
     if (process.platform !== 'win32' || !fs.existsSync(BLE_PROGRAM)) { resolve([]); return; }
-    execFile(BLE_PROGRAM, [], { windowsHide: true, timeout: BLE_TIMEOUT_MS, encoding: 'utf8' }, (err, stdout) => {
+    const args = only ? ['--only', only.join(',')] : [];
+    execFile(BLE_PROGRAM, args, { windowsHide: true, timeout: BLE_TIMEOUT_MS, encoding: 'utf8' }, (err, stdout) => {
       const list = err ? null : parseScan(String(stdout).trim().split(/\r?\n/).pop());
       // A device that didn't answer this time (asleep) keeps its last level until it does.
-      if (list) for (const d of list) ble.set(d.id, d);
+      if (list) for (const d of list) ble.set(d.id, { ...d, seenAt: Date.now() });
       resolve(list || []);
     });
-  });
+  }).finally(() => { bleRun = null; });
+  return bleRun;
 }
 let seenAt = 0;
 
@@ -84,8 +94,24 @@ async function selfTest() {
   return list ? { ok: true, count: list.length } : { ok: false, error };
 }
 
-function startWatching() {
-  if (watcher || process.platform !== 'win32') return;
+// opts.ble: the MACs of the Bluetooth LE devices saved cards read directly (or true for all), so the
+// slower LE reader runs too, for those only.
+function startWatching(opts = {}) {
+  if (process.platform !== 'win32') return;
+  const wanted = Array.isArray(opts.ble) ? opts.ble : null;
+  if (opts.ble && (!Array.isArray(opts.ble) || opts.ble.length)) {
+    const changed = String(bleOnly) !== String(wanted);
+    bleOnly = wanted;
+    if (!bleTimer || changed) {
+      if (bleTimer) clearInterval(bleTimer);
+      readBle(bleOnly);
+      bleTimer = setInterval(() => readBle(bleOnly), BLE_EVERY_MS);
+    }
+  } else if (bleTimer) {
+    clearInterval(bleTimer);
+    bleTimer = null;
+  }
+  if (watcher) return;
   const [file, args] = command(WATCH_EVERY_S);
   watcher = spawn(file, args, { windowsHide: true });
   let buffer = '';
@@ -99,10 +125,6 @@ function startWatching() {
       if (list) remember(list);
     }
   });
-  if (!bleTimer) {
-    readBle();
-    bleTimer = setInterval(readBle, BLE_EVERY_MS);
-  }
   watcher.on('error', () => { watcher = null; });
   watcher.on('exit', () => { watcher = null; });
 }
@@ -114,9 +136,9 @@ function stopWatching() {
   bleTimer = null;
 }
 
-const get = (id) => latest.get(id) || ble.get(id) || null;
-const list = () => Array.from(latest.values()).concat(Array.from(ble.values()));
+const get = (id) => latest.get(id) || bleNow(ble.get(id)) || null;
+const list = () => Array.from(latest.values()).concat(Array.from(ble.values(), bleNow));
 const hasScanned = () => seenAt > 0;
 const isSystemId = (id) => /^(bt|ble|xinput):/.test(id);
 
-module.exports = { scan, selfTest, startWatching, stopWatching, get, list, hasScanned, isSystemId, parseScan };
+module.exports = { scan, selfTest, startWatching, stopWatching, get, list, hasScanned, isSystemId, parseScan, _ble: ble, BLE_STALE_MS };

@@ -8,6 +8,7 @@ const { listLogicalDevices } = require('./catalog');
 const { driverById } = require('./drivers');
 const { expandReceivers } = require('./drivers/lightspeed');
 const { capture } = require('./inspector');
+const { serialize } = require('./session');
 
 // Scans in progress, so a Cancel from the window can stop them. Messages are handled as they
 // come, so a cancel arrives while the scan is still running.
@@ -19,11 +20,12 @@ async function handle(id, cmd, args) {
     for (const scan of scans) scan.abort();
     return scans.size > 0;
   }
+  // One read at a time per device: a read the client already gave up on may still be running.
   if (cmd === 'readBattery') {
     const [driverId, device, profile] = args;
-    return driverById(driverId).readBattery(device, profile);
+    return serialize(device && device.id, () => driverById(driverId).readBattery(device, profile));
   }
-  if (cmd === 'identify') return driverById(args[0]).identify(args[1]);
+  if (cmd === 'identify') return serialize(args[1] && args[1].id, () => driverById(args[0]).identify(args[1]));
   if (cmd === 'capture') {
     const scan = new AbortController();
     scans.add(scan);

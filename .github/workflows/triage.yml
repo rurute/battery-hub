@@ -2,11 +2,14 @@ name: Triage device reports
 
 # Labels each new device report, closes copies of a device that was already reported, and keeps
 # the "Most requested devices" issue current. The logic lives in .github/scripts/triage.js.
-# Runs daily as well, so 👍 votes (which trigger nothing) still move devices up the list.
+# Runs daily as well, so 👍 votes (which trigger nothing) still move devices up the list, and issues
+# waiting a week for the reporter close (a comment from the reporter reopens them).
 
 on:
   issues:
     types: [opened, closed, reopened]
+  issue_comment:
+    types: [created]
   schedule:
     - cron: '17 4 * * *'
   workflow_dispatch:

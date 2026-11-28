@@ -58,6 +58,38 @@ async function openReport(result, note) {
   }
 }
 
+// Sending without a GitHub account goes through the project's relay (main/relay.js). The button
+// only shows when this version has one.
+const relayReady = window.batteryHub.relayAvailable().catch(() => false);
+const DIRECT_NOTE = 'No GitHub account? Send it from here instead: the replies show up in Settings → Help → Your reports, and you can answer them there.';
+
+// A "Send without a GitHub account" button for a report. extra() adds fields at send time (the
+// support request's description). onSent(number) runs after it went through.
+function directButton(result, note, onSent, extra = () => ({})) {
+  const direct = document.createElement('button');
+  direct.className = 'btn btn-ghost';
+  direct.textContent = 'Send without a GitHub account';
+  direct.hidden = true;
+  relayReady.then((ready) => { direct.hidden = !ready || !result.form; });
+  direct.addEventListener('click', async () => {
+    direct.disabled = true;
+    direct.textContent = 'Sending…';
+    try {
+      const form = { ...result.form, fields: { ...result.form.fields, ...extra() } };
+      const sent = await window.batteryHub.sendDirect(form, result.hardware || null);
+      direct.textContent = 'Sent';
+      note.textContent = `Sent as report #${sent.number}. Replies show up in Settings → Help → Your reports, and you'll get a notification.`;
+      showMyReportsRow();
+      if (onSent) onSent(sent.number);
+    } catch (e) {
+      direct.disabled = false;
+      direct.textContent = 'Send without a GitHub account';
+      note.textContent = `It couldn't be sent: ${plainError(e)}`;
+    }
+  });
+  return direct;
+}
+
 function checkActions(...buttons) {
   const actions = document.createElement('div');
   actions.className = 'check-actions';
@@ -87,8 +119,18 @@ function renderResults(result, target = supportResults, sendLabel = 'Send suppor
   send.className = 'btn btn-primary';
   send.textContent = sendLabel;
   send.addEventListener('click', () => openReport(result, note));
+  // A support request sent from here has no GitHub form to describe the problem in, so it's asked here.
+  const problem = document.createElement('textarea');
+  problem.className = 'report-problem';
+  problem.placeholder = 'What went wrong? (for sending without an account)';
+  problem.hidden = true;
+  relayReady.then((ready) => { problem.hidden = !ready || !result.form || result.form.template !== 'support-request.yml'; });
+  const direct = directButton(result, note, null, () => (problem.value.trim() ? { problem: problem.value.trim() } : {}));
+  const directNote = supportText('div', 'check-note', DIRECT_NOTE);
+  directNote.hidden = true;
+  relayReady.then((ready) => { directNote.hidden = !ready || !result.form; });
 
-  target.replaceChildren(verdict, list, preview, checkActions(copyButton(result.report), send), note);
+  target.replaceChildren(verdict, list, preview, problem, checkActions(copyButton(result.report), send, direct), note, directNote);
   target.hidden = false;
 }
 
@@ -151,6 +193,18 @@ async function sendDeviceReport(button, request, target) {
     } else if (result.verdict.tone === 'bad') {
       // The fault looks to be on their end, so show them the fix before anything else.
       renderResults(result, target, 'Send anyway');
+    } else if (await relayReady) {
+      // Two ways to send: on GitHub, or from here for someone without an account.
+      const note = supportText('div', 'check-note', result.complete ? SEND_NOTE : SEND_NOTE + LONG_NOTE);
+      const onGitHub = document.createElement('button');
+      onGitHub.className = 'btn btn-primary';
+      onGitHub.textContent = 'Send on GitHub';
+      onGitHub.addEventListener('click', async () => {
+        await openReport(result, note);
+        if (result.hardware) window.batteryHub.markReported(result.hardware);
+      });
+      const direct = directButton(result, note, () => { if (result.hardware) window.batteryHub.markReported(result.hardware); });
+      target.replaceChildren(checkActions(onGitHub, direct, copyButton(result.report)), note, supportText('div', 'check-note', DIRECT_NOTE));
     } else {
       const note = supportText('div', 'check-note', result.complete ? SENT_NOTE : SENT_NOTE + LONG_NOTE);
       target.replaceChildren(note, checkActions(copyButton(result.report)));
@@ -263,10 +317,29 @@ async function offerWorksReport(dev) {
       note.textContent = `The form couldn't be opened: ${plainError(e)}`;
     }
   });
+  // Without an account: the same report, sent from here.
+  const direct = document.createElement('button');
+  direct.className = 'btn btn-ghost';
+  direct.textContent = 'Send without a GitHub account';
+  direct.hidden = true;
+  relayReady.then((ready) => { direct.hidden = !ready; });
+  direct.addEventListener('click', async () => {
+    direct.disabled = true;
+    try {
+      const result = await window.batteryHub.worksReport(dev.id);
+      confirmedDevices[dev.id] = Date.now();
+      const sent = await window.batteryHub.sendDirect(result.form, result.hardware || null);
+      showMyReportsRow();
+      card.replaceChildren(supportText('div', 'step-title', 'Thank you!'), supportText('div', 'check-note', `Sent as report #${sent.number}. The device will be added to the list.`));
+    } catch (e) {
+      direct.disabled = false;
+      note.textContent = `It couldn't be sent: ${plainError(e)}`;
+    }
+  });
   card.append(
     supportText('div', 'step-title', 'Is this battery level right?'),
     supportText('div', 'step-desc', 'If it matches what the device or its own app shows, tell us it works.'),
-    checkActions(yes),
+    checkActions(yes, direct),
     note,
   );
   slot.replaceChildren(card);
@@ -284,4 +357,79 @@ supportRun.addEventListener('click', async () => {
     supportRun.disabled = false;
     supportRun.textContent = 'Run again';
   }
+});
+
+// ---------- your reports (sent without a GitHub account) ----------
+const myReportsRow = document.getElementById('my-reports-row');
+const myReportsBtn = document.getElementById('my-reports-btn');
+const myReports = document.getElementById('my-reports');
+
+function showMyReportsRow() { myReportsRow.hidden = false; }
+window.batteryHub.getSettings()
+  .then((saved) => { if ((saved.sentReports || []).length) relayReady.then((ready) => { if (ready) showMyReportsRow(); }); })
+  .catch(() => {});
+
+function replyBox(report) {
+  const box = document.createElement('textarea');
+  box.className = 'report-problem';
+  box.placeholder = 'Answer here';
+  const send = document.createElement('button');
+  send.className = 'btn btn-primary';
+  send.textContent = 'Send answer';
+  const note = supportText('div', 'check-note', '');
+  send.addEventListener('click', async () => {
+    if (!box.value.trim()) return;
+    send.disabled = true;
+    try {
+      await window.batteryHub.replyToReport(report.number, box.value.trim());
+      await loadMyReports();
+    } catch (e) {
+      send.disabled = false;
+      note.textContent = `It couldn't be sent: ${plainError(e)}`;
+    }
+  });
+  return [box, checkActions(send), note];
+}
+
+function reportView(report) {
+  const card = document.createElement('div');
+  card.className = 'step-card';
+  const open = document.createElement('button');
+  open.className = 'btn btn-ghost';
+  open.textContent = 'Open on GitHub';
+  open.addEventListener('click', () => window.batteryHub.openExternal(report.url).catch(() => {}));
+  card.append(supportText('div', 'step-title', `#${report.number} ${report.title}`, true));
+  if (!report.replies) card.append(supportText('div', 'check-detail', "The replies couldn't be loaded right now."));
+  else if (!report.replies.length) card.append(supportText('div', 'check-detail', 'No replies yet. You will get a notification when there is one.'));
+  for (const r of report.replies || []) {
+    const reply = document.createElement('div');
+    reply.className = 'report-reply';
+    reply.append(supportText('div', 'check-verdict-title', r.mine ? 'You' : r.author, !r.mine), supportText('div', 'check-detail', r.body, true));
+    card.append(reply);
+  }
+  card.append(...replyBox(report), checkActions(open));
+  return card;
+}
+
+async function loadMyReports() {
+  myReportsBtn.disabled = true;
+  try {
+    const list = await window.batteryHub.myReports();
+    myReports.replaceChildren(...(list.length ? list.map(reportView) : [supportText('div', 'check-detail', 'No reports sent from here yet.')]));
+    myReports.hidden = false;
+  } catch (e) {
+    myReports.replaceChildren(supportText('div', 'check-detail', `Your reports couldn't be loaded: ${plainError(e)}`));
+    myReports.hidden = false;
+  } finally {
+    myReportsBtn.disabled = false;
+    myReportsBtn.textContent = 'Refresh';
+  }
+}
+
+myReportsBtn.addEventListener('click', loadMyReports);
+// The notification for a new reply opens the window here.
+window.batteryHub.onShowMyReports(() => {
+  showMyReportsRow();
+  if (typeof switchView === 'function') switchView('settings');
+  loadMyReports().then(() => myReportsRow.scrollIntoView({ block: 'start' }));
 });

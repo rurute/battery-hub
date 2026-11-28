@@ -78,8 +78,10 @@ module.exports = {
   enumerate: (options) => call('enumerate', [options || {}], 20000),
   // Headroom over the drivers' own internal timeouts (generic input-mode waits up to 8s). A
   // worker that dies mid-read says nothing about the device, so that gets one more try.
+  // The Compx keyboard receiver's first read can try the keyboard session, its PowerShell send and
+  // then the mouse frame (about 13.5 s at worst), so it gets more room.
   readBattery: (driverId, device, profile) => {
-    const read = () => call('readBattery', [driverId, device, profile || null], 12000);
+    const read = () => call('readBattery', [driverId, device, profile || null], driverId === 'compx' ? 20000 : 12000);
     return read().catch((e) => {
       if (e.message === WORKER_EXITED) return read();
       throw e;

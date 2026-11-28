@@ -327,3 +327,52 @@ test("a receiver's old card becomes the card of the device it was reading, keepi
     delete devices[parentId];
   }
 });
+
+test('a refresh reads devices while the Windows scan runs; Windows cards wait for the scan', async () => {
+  const events = [];
+  const originalScan = system.scan;
+  const originalGet = system.get;
+  let finishScan;
+  system.scan = () => { events.push('scan start'); return new Promise((r) => { finishScan = () => { events.push('scan done'); r([]); }; }); };
+  system.get = () => { events.push('windows read'); return { capacity: 33, connected: true }; };
+  addMouse();
+  devices.bud = { id: 'bud', driverId: 'system', product: 'Buds', links: [] };
+  devices.bud.id = 'bt:bud';
+  devices['bt:bud'] = { id: 'bt:bud', driverId: 'system', product: 'Buds' };
+  delete devices.bud;
+  try {
+    const done = poller.pollOnce(() => {}, { force: true });
+    await flush();
+    assert.ok(finishRead, 'the device read started before the scan ended');
+    events.push('device read');
+    finishRead.resolve({ capacity: 70, charging: false });
+    await flush();
+    finishScan();
+    await done;
+    assert.ok(events.indexOf('device read') < events.indexOf('scan done'));
+    assert.ok(events.indexOf('windows read') > events.indexOf('scan done'));
+    assert.equal(devices['bt:bud'].lastReading.capacity, 33);
+  } finally {
+    system.scan = originalScan;
+    system.get = originalGet;
+    delete devices['bt:bud'];
+  }
+});
+
+test('cards that answered last time are read before cards that are away', async () => {
+  const order = [];
+  const original = hidClient.readBattery;
+  hidClient.enumerate = async () => [{ id: 'quiet' }, { id: 'mouse' }];
+  hidClient.readBattery = (driverId, d) => { order.push(d && d.id); return Promise.resolve({ capacity: 50, charging: false }); };
+  delete devices.mouse; // so the away card comes first in the saved order
+  devices.quiet = { id: 'quiet', driverId: 'generic', product: 'Quiet', online: false, lastError: 'mouse is off' };
+  addMouse();
+  try {
+    await poller.pollOnce(() => {}, { force: true });
+    assert.deepEqual(order.filter((id) => id === 'quiet' || id === 'mouse'), ['mouse', 'quiet']);
+  } finally {
+    hidClient.readBattery = original;
+    hidClient.enumerate = async () => [{ id: 'mouse' }];
+    delete devices.quiet;
+  }
+});

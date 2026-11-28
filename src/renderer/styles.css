@@ -769,6 +769,10 @@ html[lang="ru"] .settings-label { min-width: 0; }
 .step-card .text-input { display: block; width: 100%; box-sizing: border-box; margin: 10px 0 12px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--hover-fill); color: var(--text); font-size: 13px; }
 .step-card .check-fix { margin-top: 8px; }
 .check-note { margin-top: 10px; font-size: 11.5px; line-height: 1.4; color: var(--text-tertiary); }
+.report-problem { display: block; width: 100%; min-height: 64px; margin-top: 12px; padding: 8px 10px; box-sizing: border-box; resize: vertical; font: inherit; font-size: 12.5px; color: var(--text); background: transparent; border: 1px solid var(--border-strong); border-radius: 8px; }
+.report-problem[hidden] { display: none; }
+.report-reply { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.report-reply .check-detail { white-space: pre-wrap; }
 
 .settings-footer {
   display: flex; align-items: center; justify-content: flex-end;

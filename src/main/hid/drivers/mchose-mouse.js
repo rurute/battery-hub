@@ -14,7 +14,10 @@ const session = require('../session');
 const MCHOSE = 0x3837;
 const MCHOSE_ALT = 0x5253; // the A7 Ultra's other vendor id, which M HUB matches on its own
 // Product ids M HUB lists with these collections next to the reported ones.
-const PRODUCT_IDS = new Set([0x1001, 0x4150, 0x4022, 0x100a, 0x100b, 0x100c]); // 0x100a: A7 V2 Pro (#234)
+// 0x100a: A7 V2 Pro (#234). 0x1009 (A7X Ultra receiver), the A5 V2 Ultra on 41e4:1101 / 1102 and the G3
+// Ultra on Realtek's 0bda:4762 are in M HUB's list for this read too.
+const PRODUCT_IDS = new Set([0x1001, 0x4150, 0x4022, 0x100a, 0x100b, 0x100c, 0x1009]);
+const OTHER_IDS = new Set(['41e4:1101', '41e4:1102', '0bda:4762']);
 const PAGES = [0xff01, 0xff0b];
 const REPORT_ID = 0x11;
 const READ_DEVICE = 0x06;
@@ -26,7 +29,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const channelsOf = (logicalDevice) => logicalDevice.channels.filter((c) => PAGES.includes(c.usagePage));
 
 function matches(logicalDevice) {
-  const known = (logicalDevice.vendorId === MCHOSE && PRODUCT_IDS.has(logicalDevice.productId)) || logicalDevice.vendorId === MCHOSE_ALT;
+  const id = `${(logicalDevice.vendorId || 0).toString(16).padStart(4, '0')}:${(logicalDevice.productId || 0).toString(16).padStart(4, '0')}`;
+  const known = (logicalDevice.vendorId === MCHOSE && PRODUCT_IDS.has(logicalDevice.productId)) || logicalDevice.vendorId === MCHOSE_ALT || OTHER_IDS.has(id);
   return known && channelsOf(logicalDevice).length > 0;
 }
 

@@ -15,6 +15,8 @@ const LABELS = {
   cant: { name: "can't support", color: 'b60205', description: "The device doesn't share its battery level, so it can't be read" },
   works: { name: 'works', color: '0e8a16', description: 'Someone confirmed Battery Hub reads this device' },
   supported: { name: 'supported', color: '1d76db', description: 'Battery Hub reads this device now; waiting for someone to confirm' },
+  stale: { name: 'stale', color: 'ededed', description: 'Closed after a week without an answer; a comment from the reporter reopens it' },
+  fromApp: { name: 'from-app', color: 'c5def5', description: 'Sent from the app by someone without a GitHub account; they answer from the app' },
   board: { name: BOARD_LABEL, color: '5319e7', description: 'The list of requested devices' },
 };
 const NO_ANSWER = /^_?no response_?$|^(unknown|n\/a|none|-|\?+|no se|不知道)$/i;
@@ -139,7 +141,7 @@ function boardBody(reports, works = []) {
       || sorted.find((r) => !r.duplicate) || sorted[0];
     // A device marked can't support leaves the ranking even while its report stays open.
     row.cant = sorted.some((r) => r.cantSupport);
-    row.open = sorted.some((r) => r.state === 'open') && !row.cant;
+    row.open = sorted.some((r) => r.state === 'open' || r.stale) && !row.cant;
   }
   const score = (r) => r.people.size + r.votes;
   const byScore = (x, y) => score(y) - score(x) || x.main.number - y.main.number;
@@ -210,6 +212,7 @@ async function updateBoard(github, owner, repo, issues) {
     duplicate: (i.labels || []).some((l) => l.name === LABELS.duplicate.name) || i.state_reason === 'duplicate',
     cantSupport: (i.labels || []).some((l) => l.name === LABELS.cant.name),
     works: (i.labels || []).some((l) => l.name === LABELS.works.name),
+    stale: (i.labels || []).some((l) => l.name === LABELS.stale.name),
     supported: (i.labels || []).some((l) => l.name === LABELS.supported.name),
   }));
   const body = boardBody(reports, await allWorks(github, owner, repo));
@@ -222,11 +225,62 @@ async function updateBoard(github, owner, repo, issues) {
   }
 }
 
+// ---- Keeping the open list to real work ----
+// A question the reporter doesn't answer for a week closes the issue (as "stale"), with a note that a
+// comment reopens it. A closed issue the reporter (not the maintainer or a bot) comments on reopens.
+const STALE_DAYS = 7;
+const WAITING = ['needs info', 'no data', 'old version'];
+const KEEP = ['supported', 'works', BOARD_LABEL, "can't support"];
+const isTeam = (c) => !c || (c.user && c.user.type === 'Bot') || ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(c.author_association);
+const STALE_NOTE = "Closing this for now, since we haven't heard back in a week. It still counts on the device list in #78. Just comment here when you have the answer and it will be reopened.";
+
+// Whether an issue should close as stale: waiting for the reporter, and the last word was ours, a week ago.
+function isStale(issue, lastComment, now = Date.now()) {
+  const names = (issue.labels || []).map((l) => l.name || l);
+  if (issue.state !== 'open' || issue.pull_request) return false;
+  if (!names.some((n) => WAITING.includes(n)) || names.some((n) => KEEP.includes(n))) return false;
+  if (lastComment && !isTeam(lastComment)) return false; // the reporter spoke last: it's our turn
+  const since = Date.parse((lastComment && lastComment.created_at) || issue.created_at);
+  return now - since >= STALE_DAYS * 86400000;
+}
+
+// Whether a new comment should reopen a closed issue: closed by us as stale or done, and the comment
+// isn't from the team or a bot.
+function shouldReopen(issue, comment) {
+  if (!issue || issue.pull_request || issue.state !== 'closed' || isTeam(comment)) return false;
+  const names = (issue.labels || []).map((l) => l.name || l);
+  return names.includes('stale') || names.includes('supported') || issue.state_reason === 'completed';
+}
+
+async function closeStale(github, owner, repo) {
+  const open = await github.paginate(github.rest.issues.listForRepo, { owner, repo, state: 'open', per_page: 100 });
+  for (const issue of open) {
+    const names = (issue.labels || []).map((l) => l.name);
+    if (!names.some((n) => WAITING.includes(n)) || names.some((n) => KEEP.includes(n))) continue;
+    const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: issue.number, per_page: 100 });
+    if (!isStale(issue, comments[comments.length - 1])) continue;
+    const n = { owner, repo, issue_number: issue.number };
+    await github.rest.issues.createComment({ ...n, body: STALE_NOTE });
+    await github.rest.issues.addLabels({ ...n, labels: [LABELS.stale.name] });
+    await github.rest.issues.update({ ...n, state: 'closed', state_reason: 'not_planned' });
+  }
+}
+
 async function run({ github, context }) {
   const { owner, repo } = context.repo;
   await ensureLabels(github, owner, repo);
   const issues = await allDeviceIssues(github, owner, repo);
   const issue = context.payload.issue;
+
+  if (context.eventName === 'issue_comment') {
+    if (shouldReopen(issue, context.payload.comment)) {
+      const n = { owner, repo, issue_number: issue.number };
+      await github.rest.issues.update({ ...n, state: 'open' });
+      await github.rest.issues.removeLabel({ ...n, name: LABELS.stale.name }).catch(() => {});
+    }
+    return;
+  }
+  if (context.eventName === 'schedule' || context.eventName === 'workflow_dispatch') await closeStale(github, owner, repo);
 
   if (context.eventName === 'issues' && context.payload.action === 'opened' && issue && isDeviceReport(issue)) {
     const latest = await github.rest.repos.getLatestRelease({ owner, repo }).then((r) => r.data.tag_name, () => null);
@@ -248,4 +302,4 @@ async function run({ github, context }) {
   await updateBoard(github, owner, repo, issues);
 }
 
-module.exports = { run, parseReport, hardwareOf, decide, boardBody, cleanName, isOlder, isDeviceReport, isWorksReport };
+module.exports = { run, isStale, shouldReopen, parseReport, hardwareOf, decide, boardBody, cleanName, isOlder, isDeviceReport, isWorksReport };
